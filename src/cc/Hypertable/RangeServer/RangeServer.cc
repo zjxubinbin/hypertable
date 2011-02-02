@@ -46,9 +46,12 @@ extern "C" {
 
 #include "Hypertable/Lib/CommitLog.h"
 #include "Hypertable/Lib/Key.h"
-#include "Hypertable/Lib/RangeServerMetaLogReader.h"
-#include "Hypertable/Lib/RangeServerMetaLogEntries.h"
+#include "Hypertable/Lib/MetaLogDefinition.h"
+#include "Hypertable/Lib/MetaLogReader.h"
+#include "Hypertable/Lib/MetaLogWriter.h"
 #include "Hypertable/Lib/RangeServerProtocol.h"
+#include "Hypertable/Lib/old/RangeServerMetaLogReader.h"
+#include "Hypertable/Lib/old/RangeServerMetaLogEntries.h"
 
 #include "DfsBroker/Lib/Client.h"
 
@@ -62,6 +65,8 @@ extern "C" {
 #include "MaintenanceTaskCompaction.h"
 #include "MaintenanceTaskSplit.h"
 #include "MergeScanner.h"
+#include "MetaLogDefinitionRangeServer.h"
+#include "MetaLogEntityRange.h"
 #include "RangeServer.h"
 #include "RangeStatsGatherer.h"
 #include "ScanContext.h"
@@ -284,7 +289,8 @@ void RangeServer::shutdown() {
     delete Global::system_log;
     delete Global::metadata_log;
     delete Global::root_log;
-    delete Global::range_log;
+
+    Global::rsml_writer = 0;
 
     delete m_query_cache;
 
@@ -293,9 +299,8 @@ void RangeServer::shutdown() {
     Global::rs_metrics_table = 0;
     Global::hyperspace = 0;
 
-    if (Global::log_dfs != Global::dfs)
-      delete Global::log_dfs;
-    delete Global::dfs;
+    Global::log_dfs = 0;
+    Global::dfs = 0;
 
     delete Global::protocol;
   }
@@ -358,8 +363,6 @@ void RangeServer::initialize(PropertiesPtr &props) {
   try {
     path = Global::log_dir + "/user";
     Global::log_dfs->mkdirs(path);
-    path = Global::log_dir + "/range_txn";
-    Global::log_dfs->mkdirs(path);
   }
   catch (Exception &e) {
     HT_THROW2F(e.code(), e, "Problem creating commit log directory '%s': %s",
@@ -369,38 +372,66 @@ void RangeServer::initialize(PropertiesPtr &props) {
   HT_INFO_OUT << "log_dir=" << Global::log_dir << HT_END;
 }
 
+namespace {
+
+  void recover_old_metalog(std::vector<MetaLog::EntityPtr> &entities) {
+    String meta_log_dir = Global::log_dir + "/range_txn";
+    OldMetaLog::RangeServerMetaLogReaderPtr rsml_reader;
+
+    try {
+
+      if (Global::log_dfs->exists(meta_log_dir)) { 
+        bool found_recover_entry;
+        rsml_reader = new OldMetaLog::RangeServerMetaLogReader(Global::log_dfs.get(), meta_log_dir);
+        if (!rsml_reader->empty()) {
+          const OldMetaLog::RangeStates &range_states = rsml_reader->load_range_states(&found_recover_entry);
+          foreach(const OldMetaLog::RangeStateInfo *i, range_states) {
+            MetaLog::EntityPtr entity = new MetaLog::EntityRange(i->table, i->range, i->range_state);
+            entities.push_back(entity);
+          }
+        }
+      }
+
+    }
+    catch (Exception &e) {
+      HT_ERROR_OUT << e << HT_END;
+      HT_ABORT;
+    }
+  }
+  
+}
+
 
 void RangeServer::local_recover() {
-  String meta_log_dir = Global::log_dir + "/range_txn";
-  RangeServerMetaLogReaderPtr rsml_reader;
+  MetaLog::DefinitionPtr rsml_definition = new MetaLog::DefinitionRangeServer();
+  MetaLog::ReaderPtr rsml_reader;
   CommitLogReaderPtr root_log_reader;
   CommitLogReaderPtr system_log_reader;
   CommitLogReaderPtr metadata_log_reader;
   CommitLogReaderPtr user_log_reader;
   std::vector<RangePtr> rangev;
+  std::vector<MetaLog::EntityPtr> entities;
+  MetaLog::EntityRange *range_entity;
 
   try {
     std::vector<MaintenanceTask*> maintenance_tasks;
     boost::xtime now;
     boost::xtime_get(&now, boost::TIME_UTC);
 
-    /**
-     * Check for existence of
-     * /hypertable/servers/X.X.X.X_port/log/range_txn/0.log file
-     */
+    rsml_reader = new MetaLog::Reader(Global::log_dfs, rsml_definition,
+                                      Global::log_dir + "/" + rsml_definition->name());
 
-    rsml_reader = new RangeServerMetaLogReader(Global::log_dfs,
-                                               meta_log_dir);
+    rsml_reader->get_entities(entities);
 
-    if (!rsml_reader->empty()) {
-      HT_DEBUG_OUT <<"Found "<< meta_log_dir <<", start recovering"<< HT_END;
+    // If empty, try loading the old MetaLog
+    if (entities.empty())
+      recover_old_metalog(entities);
 
-      // Load range states
-      bool found_recover_entry;
-      const RangeStates &range_states = rsml_reader->load_range_states(&found_recover_entry);
+    if (!entities.empty()) {
+      HT_DEBUG_OUT <<"Found "<< Global::log_dir << "/" << rsml_definition->name() <<", start recovering"<< HT_END;
 
-      // Re-open RSML for writing
-      Global::range_log = new RangeServerMetaLog(Global::log_dfs, meta_log_dir);
+      Global::rsml_writer = new MetaLog::Writer(Global::log_dfs, rsml_definition,
+                                                Global::log_dir, entities);
 
       /**
        * First ROOT metadata range
@@ -410,17 +441,16 @@ void RangeServer::local_recover() {
       // clear the replay map
       m_replay_map->clear();
 
-      foreach(const RangeStateInfo *i, range_states) {
-        if (i->table.is_metadata() && i->range.end_row
-            && !strcmp(i->range.end_row, Key::END_ROOT_ROW)) {
-          HT_ASSERT(i->transactions.size() == 1 &&
-              i->transactions.front()->get_type() == MetaLogEntryFactory::RS_RANGE_LOADED);
-          replay_load_range(0, &i->table, &i->range, &i->range_state, false);
+      foreach(MetaLog::EntityPtr &entity, entities) {
+        range_entity = dynamic_cast<MetaLog::EntityRange *>(entity.get());
+        if (range_entity->table.is_metadata() &&
+            range_entity->spec.end_row && !strcmp(range_entity->spec.end_row, Key::END_ROOT_ROW)) {
+          replay_load_range(0, range_entity, false);
         }
       }
 
       if (!m_replay_map->empty()) {
-        root_log_reader = new CommitLogReader(Global::log_dfs,
+        root_log_reader = new CommitLogReader(Global::log_dfs.get(),
                                               Global::log_dir + "/root");
         replay_log(root_log_reader);
 
@@ -445,7 +475,7 @@ void RangeServer::local_recover() {
 	  m_live_map->merge(m_replay_map);
 
         if (root_log_reader)
-          Global::root_log = new CommitLog(Global::log_dfs, Global::log_dir
+          Global::root_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
               + "/root", m_props, root_log_reader.get());
         m_root_replay_finished = true;
         m_root_replay_finished_cond.notify_all();
@@ -467,15 +497,18 @@ void RangeServer::local_recover() {
       // clear the replay map
       m_replay_map->clear();
 
-      foreach(const RangeStateInfo *i, range_states) {
-        if (i->table.is_metadata() && !(i->range.end_row
-	    && !strcmp(i->range.end_row, Key::END_ROOT_ROW)))
-          replay_load_range(0, &i->table, &i->range, &i->range_state, false);
+      foreach(MetaLog::EntityPtr &entity, entities) {
+        range_entity = dynamic_cast<MetaLog::EntityRange *>(entity.get());
+        if (range_entity->table.is_metadata() &&
+            !(range_entity->spec.end_row &&
+              !strcmp(range_entity->spec.end_row, Key::END_ROOT_ROW))) {
+          replay_load_range(0, range_entity, false);
+        }
       }
 
       if (!m_replay_map->empty()) {
         metadata_log_reader =
-            new CommitLogReader(Global::log_dfs, Global::log_dir + "/metadata");
+          new CommitLogReader(Global::log_dfs.get(), Global::log_dir + "/metadata");
         replay_log(metadata_log_reader);
 
         // Perform any range specific post-replay tasks
@@ -500,7 +533,7 @@ void RangeServer::local_recover() {
 	  m_live_map->merge(m_replay_map);
 
         if (metadata_log_reader)
-          Global::metadata_log = new CommitLog(Global::log_dfs,
+          Global::metadata_log = new CommitLog(Global::log_dfs.get(),
               Global::log_dir + "/metadata", m_props,
               metadata_log_reader.get());
         m_metadata_replay_finished = true;
@@ -523,14 +556,15 @@ void RangeServer::local_recover() {
       // clear the replay map
       m_replay_map->clear();
 
-      foreach(const RangeStateInfo *i, range_states) {
-        if (i->table.is_system() && !i->table.is_metadata())
-          replay_load_range(0, &i->table, &i->range, &i->range_state, false);
+      foreach(MetaLog::EntityPtr &entity, entities) {
+        range_entity = dynamic_cast<MetaLog::EntityRange *>(entity.get());
+        if (range_entity->table.is_system() && !range_entity->table.is_metadata())
+          replay_load_range(0, range_entity, false);
       }
 
       if (!m_replay_map->empty()) {
         system_log_reader =
-            new CommitLogReader(Global::log_dfs, Global::log_dir + "/system");
+          new CommitLogReader(Global::log_dfs.get(), Global::log_dir + "/system");
         replay_log(system_log_reader);
 
         // Perform any range specific post-replay tasks
@@ -555,7 +589,7 @@ void RangeServer::local_recover() {
 	  m_live_map->merge(m_replay_map);
 
         if (system_log_reader)
-          Global::system_log = new CommitLog(Global::log_dfs,
+          Global::system_log = new CommitLog(Global::log_dfs.get(),
               Global::log_dir + "/system", m_props,
               system_log_reader.get());
         m_system_replay_finished = true;
@@ -578,13 +612,14 @@ void RangeServer::local_recover() {
       // clear the replay map
       m_replay_map->clear();
 
-      foreach(const RangeStateInfo *i, range_states) {
-        if (!i->table.is_system())
-          replay_load_range(0, &i->table, &i->range, &i->range_state, false);
+      foreach(MetaLog::EntityPtr &entity, entities) {
+        range_entity = dynamic_cast<MetaLog::EntityRange *>(entity.get());
+        if (!range_entity->table.is_system())
+          replay_load_range(0, range_entity, false);
       }
 
       if (!m_replay_map->empty()) {
-        user_log_reader = new CommitLogReader(Global::log_dfs,
+        user_log_reader = new CommitLogReader(Global::log_dfs.get(),
                                               Global::log_dir + "/user");
         replay_log(user_log_reader);
 
@@ -610,7 +645,7 @@ void RangeServer::local_recover() {
 	if (!m_replay_map->empty())
 	  m_live_map->merge(m_replay_map);
 
-        Global::user_log = new CommitLog(Global::log_dfs, Global::log_dir
+        Global::user_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
             + "/user", m_props, user_log_reader.get());
         m_replay_finished = true;
         m_replay_finished_cond.notify_all();
@@ -624,6 +659,7 @@ void RangeServer::local_recover() {
 	maintenance_tasks.clear();
       }
 
+
     }
     else {
       ScopedLock lock(m_mutex);
@@ -633,22 +669,22 @@ void RangeServer::local_recover() {
        */
 
       if (root_log_reader)
-        Global::root_log = new CommitLog(Global::log_dfs, Global::log_dir
+        Global::root_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
             + "/root", m_props, root_log_reader.get());
 
       if (metadata_log_reader)
-        Global::metadata_log = new CommitLog(Global::log_dfs, Global::log_dir
+        Global::metadata_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
             + "/metadata", m_props, metadata_log_reader.get());
 
       if (system_log_reader)
-        Global::system_log = new CommitLog(Global::log_dfs, Global::log_dir
+        Global::system_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
             + "/system", m_props, system_log_reader.get());
 
-      Global::user_log = new CommitLog(Global::log_dfs, Global::log_dir
+      Global::user_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
           + "/user", m_props, user_log_reader.get());
 
-      Global::range_log = new RangeServerMetaLog(Global::log_dfs,
-                                                 meta_log_dir);
+      Global::rsml_writer = new MetaLog::Writer(Global::log_dfs, rsml_definition,
+                                                Global::log_dir, entities);
 
       m_root_replay_finished = true;
       m_metadata_replay_finished = true;
@@ -1073,7 +1109,7 @@ RangeServer::load_range(ResponseCallback *cb, const TableIdentifier *table,
       is_root = table->is_metadata() && (*range_spec->start_row == 0)
         && !strcmp(range_spec->end_row, Key::END_ROOT_ROW);
 
-      HT_INFO_OUT <<"Loading range: "<< *table <<" "<< *range_spec << HT_END;
+      HT_INFO_OUT <<"Loading range: "<< *table <<" "<< *range_spec << " " << *range_state << " transfer_log=" << transfer_log_dir << HT_END;
 
       if (m_dropped_table_id_cache->contains(table->id)) {
         HT_WARNF("Table %s has been dropped", table->id);
@@ -1188,18 +1224,18 @@ RangeServer::load_range(ResponseCallback *cb, const TableIdentifier *table,
       if (table->is_metadata()) {
         if (is_root) {
           Global::log_dfs->mkdirs(Global::log_dir + "/root");
-          Global::root_log = new CommitLog(Global::log_dfs, Global::log_dir
+          Global::root_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
                                            + "/root", m_props);
         }
         else if (Global::metadata_log == 0) {
           Global::log_dfs->mkdirs(Global::log_dir + "/metadata");
-          Global::metadata_log = new CommitLog(Global::log_dfs,
+          Global::metadata_log = new CommitLog(Global::log_dfs.get(),
                                                Global::log_dir + "/metadata", m_props);
         }
       }
       else if (table->is_system() && Global::system_log == 0) {
         Global::log_dfs->mkdirs(Global::log_dir + "/system");
-        Global::system_log = new CommitLog(Global::log_dfs,
+        Global::system_log = new CommitLog(Global::log_dfs.get(),
                                            Global::log_dir + "/system", m_props);
       }
 
@@ -1210,7 +1246,7 @@ RangeServer::load_range(ResponseCallback *cb, const TableIdentifier *table,
        */
       if (transfer_log_dir && *transfer_log_dir) {
         CommitLogReaderPtr commit_log_reader =
-          new CommitLogReader(Global::log_dfs, transfer_log_dir, true);
+          new CommitLogReader(Global::log_dfs.get(), transfer_log_dir, true);
         if (!commit_log_reader->empty()) {
           CommitLog *log;
           if (is_root)
@@ -1294,8 +1330,8 @@ RangeServer::load_range(ResponseCallback *cb, const TableIdentifier *table,
         return;
       }
 
-      if (Global::range_log)
-        Global::range_log->log_range_loaded(*table, *range_spec, *range_state);
+      if (Global::rsml_writer)
+        Global::rsml_writer->record_state( range->metalog_entity() );
 
       table_info->add_staged_range(range);
     }
@@ -2158,18 +2194,14 @@ RangeServer::drop_table(ResponseCallback *cb, const TableIdentifier *table) {
     range_vector[i]->drop();
 
   /**
-   *  Wait for maintenance to complete on the ranges
+   *  Wait for maintenance to complete and record removal in RSML
    */
-  for (size_t i=0; i<range_vector.size(); i++)
+  for (size_t i=0; i<range_vector.size(); i++) {
     range_vector[i]->wait_for_maintenance_to_complete();
-
-  /**
-   *  Write a DROP TABLE entry into the meta log
-   */
-  {
-    ScopedLock lock(m_drop_table_mutex);
-    if (Global::range_log)
-      Global::range_log->log_drop_table(*table);
+    if (Global::rsml_writer) {
+      ScopedLock lock(m_drop_table_mutex);
+      Global::rsml_writer->record_removal( range_vector[i]->metalog_entity() );
+    }
   }
 
   SchemaPtr schema = table_info->get_schema();
@@ -2519,7 +2551,7 @@ void RangeServer::replay_begin(ResponseCallback *cb, uint16_t group) {
     return;
   }
 
-  m_replay_log = new CommitLog(Global::log_dfs, replay_log_dir, m_props);
+  m_replay_log = new CommitLog(Global::log_dfs.get(), replay_log_dir, m_props);
 
   cb->response_ok();
 }
@@ -2527,42 +2559,42 @@ void RangeServer::replay_begin(ResponseCallback *cb, uint16_t group) {
 
 void
 RangeServer::replay_load_range(ResponseCallback *cb,
-    const TableIdentifier *table, const RangeSpec *range_spec,
-    const RangeState *range_state, bool write_rsml) {
+                               MetaLog::EntityRange *range_entity,
+                               bool write_rsml) {
   int error = Error::OK;
   SchemaPtr schema;
   TableInfoPtr table_info, live_table_info;
   RangePtr range;
   bool register_table = false;
 
-  HT_DEBUG_OUT<< "replay_load_range\n"<< *table << *range_spec << HT_END;
+  HT_DEBUG_OUT<< "replay_load_range "<< *(MetaLog::Entity *)range_entity << HT_END;
 
   try {
 
     /** Get TableInfo from replay map, or copy it from live map, or create if
      * doesn't exist **/
-    if (!m_replay_map->get(table->id, table_info)) {
-      table_info = new TableInfo(m_master_client, table, schema);
+    if (!m_replay_map->get(range_entity->table.id, table_info)) {
+      table_info = new TableInfo(m_master_client, &range_entity->table, schema);
       register_table = true;
     }
 
-    if (!m_live_map->get(table->id, live_table_info))
+    if (!m_live_map->get(range_entity->table.id, live_table_info))
       live_table_info = table_info;
 
     // Verify schema, this will create the Schema object and add it to
     // table_info if it doesn't exist
-    verify_schema(table_info, table->generation);
+    verify_schema(table_info, range_entity->table.generation);
 
     if (register_table)
-      m_replay_map->set(table->id, table_info);
+      m_replay_map->set(range_entity->table.id, table_info);
 
     /**
      * Make sure this range is not already loaded
      */
-    if (table_info->get_range(range_spec, range) ||
-        live_table_info->get_range(range_spec, range))
+    if (table_info->get_range(&range_entity->spec, range) ||
+        live_table_info->get_range(&range_entity->spec, range))
       HT_THROWF(Error::RANGESERVER_RANGE_ALREADY_LOADED, "%s[%s..%s]",
-                table->id, range_spec->start_row, range_spec->end_row);
+                range_entity->table.id, range_entity->spec.start_row, range_entity->spec.end_row);
 
     /**
      * Lazily create sys/METADATA table pointer
@@ -2575,22 +2607,21 @@ RangeServer::replay_load_range(ResponseCallback *cb,
 
     schema = table_info->get_schema();
 
-    range = new Range(m_master_client, table, schema, range_spec,
-                      live_table_info.get(), range_state);
+    range = new Range(m_master_client, schema, range_entity, live_table_info.get());
 
     range->recovery_initialize();
 
     table_info->add_range(range);
 
     if (write_rsml)
-      Global::range_log->log_range_loaded(*table, *range_spec, *range_state);
+      Global::rsml_writer->record_state( range->metalog_entity() );
 
     if (cb && (error = cb->response_ok()) != Error::OK) {
       HT_ERRORF("Problem sending OK response - %s", Error::get_text(error));
     }
     else {
-      HT_INFOF("Successfully replay loaded range %s[%s..%s]", table->id,
-               range_spec->start_row, range_spec->end_row);
+      HT_INFOF("Successfully replay loaded range %s[%s..%s]", range_entity->table.id,
+               range_entity->spec.start_row, range_entity->spec.end_row);
     }
 
   }
@@ -2853,8 +2884,10 @@ void RangeServer::close(ResponseCallback *cb) {
 
   try {
 
-    if (Global::range_log)
-      Global::range_log->close();
+    if (Global::rsml_writer) {
+      Global::rsml_writer->close();
+      Global::rsml_writer = 0;
+    }
 
     if (Global::root_log)
       Global::root_log->close();
