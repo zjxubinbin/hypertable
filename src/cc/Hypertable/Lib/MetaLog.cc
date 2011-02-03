@@ -63,7 +63,7 @@ void MetaLog::scan_log_directory(FilesystemPtr &fs, const String &path,
         break;
     }
 
-    if (*ptr == 0 || ptr > listing[i].c_str() && !strcmp(ptr, ".bad")) {
+    if (*ptr == 0 || (ptr > listing[i].c_str() && !strcmp(ptr, ".bad"))) {
       id = atoi(listing[i].c_str());
       if (id >= *nextidp)
         *nextidp = id+1;

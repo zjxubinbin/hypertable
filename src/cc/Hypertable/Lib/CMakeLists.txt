@@ -112,14 +112,6 @@ target_link_libraries(Hypertable ${EXPAT_LIBRARIES} ${RRD_LIBRARIES} Hyperspace 
 add_executable(generate_test_data generate_test_data.cc)
 target_link_libraries(generate_test_data Hypertable)
 
-# old meta log tests
-add_executable(metalog_api_test tests/MetaLogApiTest.cc)
-target_link_libraries(metalog_api_test HyperDfsBroker Hypertable)
-add_executable(metalog_master_test tests/MetaLogMasterTest.cc)
-target_link_libraries(metalog_master_test HyperDfsBroker Hypertable)
-add_executable(metalog_rs_test tests/MetaLogRangeServerTest.cc)
-target_link_libraries(metalog_rs_test HyperDfsBroker Hypertable)
-
 # old meta log dumper
 add_executable(dump_old_metalog tests/DumpMetaLog.cc)
 target_link_libraries(dump_old_metalog HyperDfsBroker Hypertable)

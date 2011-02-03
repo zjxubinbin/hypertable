@@ -160,7 +160,9 @@ main(int ac, char *av[]) {
      *  Write initital log
      */
 
-    writer = new MetaLog::Writer(fs, g_test_definition, testdir, g_entities);
+    writer = new MetaLog::Writer(fs, g_test_definition, 
+                                 testdir + "/" + g_test_definition->name(),
+                                 g_entities);
     
     create_entities(32);
 
@@ -181,7 +183,9 @@ main(int ac, char *av[]) {
      *  Write some more
      */
 
-    writer = new MetaLog::Writer(fs, g_test_definition, testdir, g_entities);
+    writer = new MetaLog::Writer(fs, g_test_definition, 
+                                 testdir + "/" + g_test_definition->name(),
+                                 g_entities);
 
     {
       ofstream out("metalog_test2.out");
@@ -202,7 +206,9 @@ main(int ac, char *av[]) {
 
     MetaLog::Writer::skip_recover_entry = true;
 
-    writer = new MetaLog::Writer(fs, g_test_definition, testdir, g_entities);
+    writer = new MetaLog::Writer(fs, g_test_definition,
+                                 testdir + "/" + g_test_definition->name(),
+                                 g_entities);
 
     {
       ofstream out("metalog_test3.out");

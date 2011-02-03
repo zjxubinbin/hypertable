@@ -431,7 +431,8 @@ void RangeServer::local_recover() {
       HT_DEBUG_OUT <<"Found "<< Global::log_dir << "/" << rsml_definition->name() <<", start recovering"<< HT_END;
 
       Global::rsml_writer = new MetaLog::Writer(Global::log_dfs, rsml_definition,
-                                                Global::log_dir, entities);
+                                                Global::log_dir + "/" + rsml_definition->name(),
+                                                entities);
 
       /**
        * First ROOT metadata range
@@ -684,7 +685,8 @@ void RangeServer::local_recover() {
           + "/user", m_props, user_log_reader.get());
 
       Global::rsml_writer = new MetaLog::Writer(Global::log_dfs, rsml_definition,
-                                                Global::log_dir, entities);
+                                                Global::log_dir + "/" + rsml_definition->name(),
+                                                entities);
 
       m_root_replay_finished = true;
       m_metadata_replay_finished = true;

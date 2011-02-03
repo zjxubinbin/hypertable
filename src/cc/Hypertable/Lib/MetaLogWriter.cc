@@ -53,7 +53,6 @@ Writer::Writer(FilesystemPtr &fs, DefinitionPtr &definition, const String &path,
   // Setup DFS path name
   m_path = path;
   boost::trim_right_if(m_path, boost::is_any_of("/"));
-  m_path += String("/") + m_definition->name();
   if (!m_fs->exists(m_path))
     m_fs->mkdirs(m_path);
 
@@ -133,6 +132,7 @@ void Writer::purge_old_log_files(std::vector<int32_t> &file_ids, size_t keep_cou
       if (FileUtils::exists(tmp_name))
 	FileUtils::unlink(tmp_name);
     }
+    file_ids.resize(keep_count);
   }
 }
 
