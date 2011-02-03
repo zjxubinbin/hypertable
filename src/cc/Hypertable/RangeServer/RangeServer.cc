@@ -451,7 +451,7 @@ void RangeServer::local_recover() {
       }
 
       if (!m_replay_map->empty()) {
-        root_log_reader = new CommitLogReader(Global::log_dfs.get(),
+        root_log_reader = new CommitLogReader(Global::log_dfs,
                                               Global::log_dir + "/root");
         replay_log(root_log_reader);
 
@@ -476,7 +476,7 @@ void RangeServer::local_recover() {
 	  m_live_map->merge(m_replay_map);
 
         if (root_log_reader)
-          Global::root_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
+          Global::root_log = new CommitLog(Global::log_dfs, Global::log_dir
               + "/root", m_props, root_log_reader.get());
         m_root_replay_finished = true;
         m_root_replay_finished_cond.notify_all();
@@ -509,7 +509,7 @@ void RangeServer::local_recover() {
 
       if (!m_replay_map->empty()) {
         metadata_log_reader =
-          new CommitLogReader(Global::log_dfs.get(), Global::log_dir + "/metadata");
+          new CommitLogReader(Global::log_dfs, Global::log_dir + "/metadata");
         replay_log(metadata_log_reader);
 
         // Perform any range specific post-replay tasks
@@ -534,7 +534,7 @@ void RangeServer::local_recover() {
 	  m_live_map->merge(m_replay_map);
 
         if (metadata_log_reader)
-          Global::metadata_log = new CommitLog(Global::log_dfs.get(),
+          Global::metadata_log = new CommitLog(Global::log_dfs,
               Global::log_dir + "/metadata", m_props,
               metadata_log_reader.get());
         m_metadata_replay_finished = true;
@@ -565,7 +565,7 @@ void RangeServer::local_recover() {
 
       if (!m_replay_map->empty()) {
         system_log_reader =
-          new CommitLogReader(Global::log_dfs.get(), Global::log_dir + "/system");
+          new CommitLogReader(Global::log_dfs, Global::log_dir + "/system");
         replay_log(system_log_reader);
 
         // Perform any range specific post-replay tasks
@@ -590,7 +590,7 @@ void RangeServer::local_recover() {
 	  m_live_map->merge(m_replay_map);
 
         if (system_log_reader)
-          Global::system_log = new CommitLog(Global::log_dfs.get(),
+          Global::system_log = new CommitLog(Global::log_dfs,
               Global::log_dir + "/system", m_props,
               system_log_reader.get());
         m_system_replay_finished = true;
@@ -620,7 +620,7 @@ void RangeServer::local_recover() {
       }
 
       if (!m_replay_map->empty()) {
-        user_log_reader = new CommitLogReader(Global::log_dfs.get(),
+        user_log_reader = new CommitLogReader(Global::log_dfs,
                                               Global::log_dir + "/user");
         replay_log(user_log_reader);
 
@@ -646,7 +646,7 @@ void RangeServer::local_recover() {
 	if (!m_replay_map->empty())
 	  m_live_map->merge(m_replay_map);
 
-        Global::user_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
+        Global::user_log = new CommitLog(Global::log_dfs, Global::log_dir
             + "/user", m_props, user_log_reader.get());
         m_replay_finished = true;
         m_replay_finished_cond.notify_all();
@@ -670,18 +670,18 @@ void RangeServer::local_recover() {
        */
 
       if (root_log_reader)
-        Global::root_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
+        Global::root_log = new CommitLog(Global::log_dfs, Global::log_dir
             + "/root", m_props, root_log_reader.get());
 
       if (metadata_log_reader)
-        Global::metadata_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
+        Global::metadata_log = new CommitLog(Global::log_dfs, Global::log_dir
             + "/metadata", m_props, metadata_log_reader.get());
 
       if (system_log_reader)
-        Global::system_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
+        Global::system_log = new CommitLog(Global::log_dfs, Global::log_dir
             + "/system", m_props, system_log_reader.get());
 
-      Global::user_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
+      Global::user_log = new CommitLog(Global::log_dfs, Global::log_dir
           + "/user", m_props, user_log_reader.get());
 
       Global::rsml_writer = new MetaLog::Writer(Global::log_dfs, rsml_definition,
@@ -1226,18 +1226,18 @@ RangeServer::load_range(ResponseCallback *cb, const TableIdentifier *table,
       if (table->is_metadata()) {
         if (is_root) {
           Global::log_dfs->mkdirs(Global::log_dir + "/root");
-          Global::root_log = new CommitLog(Global::log_dfs.get(), Global::log_dir
+          Global::root_log = new CommitLog(Global::log_dfs, Global::log_dir
                                            + "/root", m_props);
         }
         else if (Global::metadata_log == 0) {
           Global::log_dfs->mkdirs(Global::log_dir + "/metadata");
-          Global::metadata_log = new CommitLog(Global::log_dfs.get(),
+          Global::metadata_log = new CommitLog(Global::log_dfs,
                                                Global::log_dir + "/metadata", m_props);
         }
       }
       else if (table->is_system() && Global::system_log == 0) {
         Global::log_dfs->mkdirs(Global::log_dir + "/system");
-        Global::system_log = new CommitLog(Global::log_dfs.get(),
+        Global::system_log = new CommitLog(Global::log_dfs,
                                            Global::log_dir + "/system", m_props);
       }
 
@@ -1248,7 +1248,7 @@ RangeServer::load_range(ResponseCallback *cb, const TableIdentifier *table,
        */
       if (transfer_log_dir && *transfer_log_dir) {
         CommitLogReaderPtr commit_log_reader =
-          new CommitLogReader(Global::log_dfs.get(), transfer_log_dir, true);
+          new CommitLogReader(Global::log_dfs, transfer_log_dir, true);
         if (!commit_log_reader->empty()) {
           CommitLog *log;
           if (is_root)
@@ -2553,7 +2553,7 @@ void RangeServer::replay_begin(ResponseCallback *cb, uint16_t group) {
     return;
   }
 
-  m_replay_log = new CommitLog(Global::log_dfs.get(), replay_log_dir, m_props);
+  m_replay_log = new CommitLog(Global::log_dfs, replay_log_dir, m_props);
 
   cb->response_ok();
 }
