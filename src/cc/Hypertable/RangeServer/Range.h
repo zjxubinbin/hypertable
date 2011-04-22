@@ -75,6 +75,7 @@ namespace Hypertable {
       uint64_t bytes_scanned;
       uint64_t bytes_returned;
       uint64_t bytes_written;
+      uint64_t disk_bytes_read;
       int64_t  purgeable_index_memory;
       int64_t  compact_memory;
       int64_t soft_limit;
@@ -233,11 +234,13 @@ namespace Hypertable {
     }
 
     void add_read_data(uint64_t cells_scanned, uint64_t cells_returned,
-                       uint64_t bytes_scanned, uint64_t bytes_returned) {
+                       uint64_t bytes_scanned, uint64_t bytes_returned,
+                       uint64_t disk_bytes_read) {
       m_cells_scanned += cells_scanned;
       m_cells_returned += cells_returned;
       m_bytes_scanned += bytes_scanned;
       m_bytes_returned += bytes_returned;
+      m_disk_bytes_read += disk_bytes_read;
     }
 
     void add_bytes_written(uint64_t n) {
@@ -323,6 +326,7 @@ namespace Hypertable {
     uint64_t         m_bytes_scanned;
     uint64_t         m_bytes_returned;
     uint64_t         m_bytes_written;
+    uint64_t         m_disk_bytes_read;
 
     Mutex            m_mutex;
     Mutex            m_schema_mutex;

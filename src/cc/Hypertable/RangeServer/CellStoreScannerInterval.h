@@ -29,9 +29,12 @@ namespace Hypertable {
 
   class CellStoreScannerInterval {
   public:
+    CellStoreScannerInterval() : m_disk_read(0) { }
     virtual void forward() = 0;
     virtual bool get(Key &key, ByteString &value) = 0;
     virtual ~CellStoreScannerInterval() { }
+    uint64_t get_disk_read() { return m_disk_read; }
+
   protected:
     struct BlockInfo {
       int64_t offset;
@@ -39,7 +42,7 @@ namespace Hypertable {
       const uint8_t *base;
       const uint8_t *end;
     };
-
+    uint64_t m_disk_read;
   };
 
 }

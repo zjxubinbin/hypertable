@@ -58,7 +58,7 @@ Range::Range(MasterClientPtr &master_client,
              const RangeState *state, bool needs_compaction)
   : m_scans(0), m_cells_scanned(0), m_cells_returned(0), m_cells_written(0),
     m_updates(0), m_bytes_scanned(0), m_bytes_returned(0), m_bytes_written(0),
-    m_master_client(master_client),
+    m_disk_bytes_read(0), m_master_client(master_client),
     m_schema(schema), m_revision(TIMESTAMP_MIN), m_latest_revision(TIMESTAMP_MIN),
     m_split_off_high(false), m_added_inserts(0), m_range_set(range_set),
     m_error(Error::OK), m_dropped(false), m_capacity_exceeded_throttle(false),
@@ -72,7 +72,7 @@ Range::Range(MasterClientPtr &master_client, SchemaPtr &schema,
              MetaLog::EntityRange *range_entity, RangeSet *range_set)
   : m_scans(0), m_cells_scanned(0), m_cells_returned(0), m_cells_written(0),
     m_updates(0), m_bytes_scanned(0), m_bytes_returned(0), m_bytes_written(0),
-    m_master_client(master_client), m_metalog_entity(range_entity),
+    m_disk_bytes_read(0), m_master_client(master_client), m_metalog_entity(range_entity),
     m_schema(schema), m_revision(TIMESTAMP_MIN), m_latest_revision(TIMESTAMP_MIN),
     m_split_off_high(false), m_added_inserts(0), m_range_set(range_set),
     m_error(Error::OK), m_dropped(false), m_capacity_exceeded_throttle(false),
@@ -454,6 +454,7 @@ Range::MaintenanceData *Range::get_maintenance_data(ByteArena &arena, time_t now
     mdata->cells_returned = m_cells_returned;
     mdata->bytes_scanned = m_bytes_scanned;
     mdata->bytes_returned = m_bytes_returned;
+    mdata->disk_bytes_read = m_disk_bytes_read;
     mdata->state = m_metalog_entity->state.state;
   }
 
