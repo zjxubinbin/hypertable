@@ -1277,7 +1277,7 @@ RangeServer::load_range(ResponseCallback *cb, const TableIdentifier *table,
         cell.column_family = "range_start_row";
         cell.column_qualifier = range_spec->end_row;
         cell.value = (const uint8_t *)range_spec->start_row;
-        cell.value_len = strlen(range_spec->start_row)+1;
+        cell.value_len = strlen(range_spec->start_row);
 
         m_pending_metrics_updates->add(cell);
       }
@@ -2727,7 +2727,7 @@ void RangeServer::get_statistics(ResponseCallbackGetStatistics *cb) {
       key.column_qualifier = 0;
       key.column_qualifier_len = 0;
       try {
-        mutator->set(key, (uint8_t *)value.c_str(), value.length()+1);
+        mutator->set(key, (uint8_t *)value.c_str(), value.length());
         mutator->flush();
       }
       catch (Exception &e) {

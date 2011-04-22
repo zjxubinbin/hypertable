@@ -48,8 +48,7 @@ void LoadMetricsRange::compute_and_store(TableMutator *mutator, time_t now,
   if (m_new_rows) {
     ScopedLock lock(m_mutex);
     uint8_t *oldbuf = m_buffer.release();
-    if (strcmp(m_start_row, m_new_start_row.c_str()))
-      update_start_row = true;
+    update_start_row = true;
     initialize(m_table_id, m_new_start_row, m_new_end_row);
     m_new_rows = false;
     delete [] oldbuf;
@@ -84,7 +83,7 @@ void LoadMetricsRange::compute_and_store(TableMutator *mutator, time_t now,
   if (update_start_row) {
     key.column_family = "range_start_row";
     try {
-      mutator->set(key, (uint8_t *)m_start_row, strlen(m_start_row)+1);
+      mutator->set(key, (uint8_t *)m_start_row, strlen(m_start_row));
     }
     catch (Exception &e) {
       HT_ERROR_OUT << "Problem updating sys/RS_METRICS - " << e << HT_END;
@@ -93,7 +92,7 @@ void LoadMetricsRange::compute_and_store(TableMutator *mutator, time_t now,
 
   key.column_family = "range";
   try {
-    mutator->set(key, (uint8_t *)value.c_str(), value.length()+1);
+    mutator->set(key, (uint8_t *)value.c_str(), value.length());
   }
   catch (Exception &e) {
     HT_ERROR_OUT << "Problem updating sys/RS_METRICS - " << e << HT_END;
