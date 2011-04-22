@@ -39,6 +39,7 @@
 
 #include "AccessGroup.h"
 #include "CellStore.h"
+#include "LoadFactors.h"
 #include "LoadMetricsRange.h"
 #include "MaintenanceFlag.h"
 #include "MetaLogEntityRange.h"
@@ -67,15 +68,9 @@ namespace Hypertable {
       Range *range;
       AccessGroup::MaintenanceData *agdata;
       const char *table_id;
-      uint64_t scans;
-      uint64_t updates;
-      uint64_t cells_scanned;
+      LoadFactors load_factors;
       uint64_t cells_returned;
-      uint64_t cells_written;
-      uint64_t bytes_scanned;
       uint64_t bytes_returned;
-      uint64_t bytes_written;
-      uint64_t disk_bytes_read;
       int64_t  purgeable_index_memory;
       int64_t  compact_memory;
       int64_t soft_limit;

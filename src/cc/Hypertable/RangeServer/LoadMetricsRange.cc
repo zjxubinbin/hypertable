@@ -29,9 +29,7 @@
 using namespace Hypertable;
 
 LoadMetricsRange::LoadMetricsRange(const String &table_id, const String &start_row, const String &end_row)
-  : m_new_rows(false), m_timestamp(time(0)), m_scans(0), m_updates(0),
-    m_cells_read(0), m_cells_written(0), m_bytes_read(0), m_bytes_written(0) {
-
+  : m_new_rows(false), m_timestamp(time(0)) {
   initialize(table_id, start_row, end_row);
 }
 
@@ -39,14 +37,12 @@ LoadMetricsRange::LoadMetricsRange(const String &table_id, const String &start_r
 /**
  *  Value format for version 1:
  *
- *  v1:<timestamp>,<disk>,<memory>,<scan-rate>,<update-rate>,<cell-read-rate>,<cell-write-rate>,<byte-read-rate>,<byte-write-rate>
+ *  v2:<ts>,<disk>,<memory>,<disk-bytes-read-rate>,<byte-write-rate>,<byte-read-rate>,<update-rate>,<scan-rate>,<cell-write-rate>,<cell-read-rate>
  */
 
 void LoadMetricsRange::compute_and_store(TableMutator *mutator, time_t now,
-                                         uint64_t disk_used, uint64_t memory_used,
-                                         uint64_t scans, uint64_t updates,
-                                         uint64_t cells_read, uint64_t cells_written,
-                                         uint64_t bytes_read, uint64_t bytes_written) {
+                                         LoadFactors &load_factors,
+                                         uint64_t disk_used, uint64_t memory_used) {
   bool update_start_row = false;
 
   if (m_new_rows) {
@@ -64,17 +60,18 @@ void LoadMetricsRange::compute_and_store(TableMutator *mutator, time_t now,
 
   time_t rounded_time = (now+(Global::metrics_interval/2)) - ((now+(Global::metrics_interval/2))%Global::metrics_interval);
   double time_interval = (double)(now - m_timestamp);
-  double scan_rate = (double)(scans-m_scans) / time_interval;
-  double update_rate = (double)(updates-m_updates) / time_interval;
-  double cell_read_rate = (double)(cells_read-m_cells_read) / time_interval;
-  double cell_write_rate = (double)(cells_written-m_cells_written) / time_interval;
-  double byte_read_rate = (double)(bytes_read-m_bytes_read) / time_interval;
-  double byte_write_rate = (double)(bytes_written-m_bytes_written) / time_interval;
+  double scan_rate = (double)(load_factors.scans-m_load_factors.scans) / time_interval;
+  double update_rate = (double)(load_factors.updates-m_load_factors.updates) / time_interval;
+  double cell_read_rate = (double)(load_factors.cells_scanned-m_load_factors.cells_scanned) / time_interval;
+  double cell_write_rate = (double)(load_factors.cells_written-m_load_factors.cells_written) / time_interval;
+  double byte_read_rate = (double)(load_factors.bytes_scanned-m_load_factors.bytes_scanned) / time_interval;
+  double byte_write_rate = (double)(load_factors.bytes_written-m_load_factors.bytes_written) / time_interval;
+  double disk_byte_read_rate = (double)(load_factors.disk_bytes_read-m_load_factors.disk_bytes_read) / time_interval;
 
-  String value = format("1:%ld,%llu,%llu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+  String value = format("2:%ld,%llu,%llu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
                         rounded_time, (Llu)disk_used, (Llu)memory_used,
-                        scan_rate, update_rate, cell_read_rate, cell_write_rate,
-                        byte_read_rate, byte_write_rate);
+                        disk_byte_read_rate, byte_write_rate, byte_read_rate,
+                        update_rate, scan_rate, cell_write_rate, cell_read_rate);
 
   KeySpec key;
   String row = Global::location_initializer->get() + ":" + m_table_id;
@@ -103,12 +100,7 @@ void LoadMetricsRange::compute_and_store(TableMutator *mutator, time_t now,
   }
 
   m_timestamp = now;
-  m_scans = scans;
-  m_updates = updates;
-  m_cells_read = cells_read;
-  m_cells_written = cells_written;
-  m_bytes_read = bytes_read;
-  m_bytes_written = bytes_written;  
+  m_load_factors = load_factors;
 }
 
 

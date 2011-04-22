@@ -432,10 +432,10 @@ Range::MaintenanceData *Range::get_maintenance_data(ByteArena &arena, time_t now
   {
     ScopedLock lock(m_schema_mutex);
     ag_vector = m_access_group_vector;
-    mdata->scans = m_scans;
-    mdata->updates = m_updates;
-    mdata->bytes_written = m_bytes_written;
-    mdata->cells_written = m_cells_written;
+    mdata->load_factors.scans = m_scans;
+    mdata->load_factors.updates = m_updates;
+    mdata->load_factors.bytes_written = m_bytes_written;
+    mdata->load_factors.cells_written = m_cells_written;
     mdata->schema_generation = m_metalog_entity->table.generation;
     mdata->soft_limit = m_metalog_entity->state.soft_limit;
   }
@@ -450,11 +450,11 @@ Range::MaintenanceData *Range::get_maintenance_data(ByteArena &arena, time_t now
   {
     ScopedLock lock(m_mutex);
     starting_maintenance_generation = m_maintenance_generation;
-    mdata->cells_scanned = m_cells_scanned;
+    mdata->load_factors.cells_scanned = m_cells_scanned;
     mdata->cells_returned = m_cells_returned;
-    mdata->bytes_scanned = m_bytes_scanned;
+    mdata->load_factors.bytes_scanned = m_bytes_scanned;
     mdata->bytes_returned = m_bytes_returned;
-    mdata->disk_bytes_read = m_disk_bytes_read;
+    mdata->load_factors.disk_bytes_read = m_disk_bytes_read;
     mdata->state = m_metalog_entity->state.state;
   }
 
@@ -502,11 +502,8 @@ Range::MaintenanceData *Range::get_maintenance_data(ByteArena &arena, time_t now
   mdata->busy = m_maintenance_guard.in_progress() || !m_metalog_entity->load_acknowledged;
 
   if (mutator)
-    m_load_metrics.compute_and_store(mutator, now,
-                                     mdata->disk_used, mdata->memory_used,
-                                     mdata->scans, mdata->updates,
-                                     mdata->cells_scanned, mdata->cells_written,
-                                     mdata->bytes_scanned, mdata->bytes_written);
+    m_load_metrics.compute_and_store(mutator, now, mdata->load_factors,
+                                     mdata->disk_used, mdata->memory_used);
 
   return mdata;
 }
@@ -1362,14 +1359,15 @@ int64_t Range::get_scan_revision() {
 std::ostream &Hypertable::operator<<(std::ostream &os, const Range::MaintenanceData &mdata) {
   os << "RANGE " << mdata.range->get_name() << "\n";
   os << "table_id=" << mdata.table_id << "\n";
-  os << "scans=" << mdata.scans << "\n";
-  os << "updates=" << mdata.updates << "\n";
-  os << "cells_scanned=" << mdata.cells_scanned << "\n";
+  os << "scans=" << mdata.load_factors.scans << "\n";
+  os << "updates=" << mdata.load_factors.updates << "\n";
+  os << "cells_scanned=" << mdata.load_factors.cells_scanned << "\n";
   os << "cells_returned=" << mdata.cells_returned << "\n";
-  os << "cells_written=" << mdata.cells_written << "\n";
-  os << "bytes_scanned=" << mdata.bytes_scanned << "\n";
+  os << "cells_written=" << mdata.load_factors.cells_written << "\n";
+  os << "bytes_scanned=" << mdata.load_factors.bytes_scanned << "\n";
   os << "bytes_returned=" << mdata.bytes_returned << "\n";
-  os << "bytes_written=" << mdata.bytes_written << "\n";
+  os << "bytes_written=" << mdata.load_factors.bytes_written << "\n";
+  os << "disk_bytes_read=" << mdata.load_factors.disk_bytes_read << "\n";
   os << "purgeable_index_memory=" << mdata.purgeable_index_memory << "\n";
   os << "compact_memory=" << mdata.compact_memory << "\n";
   os << "soft_limit=" << mdata.soft_limit << "\n";

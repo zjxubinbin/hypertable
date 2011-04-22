@@ -84,8 +84,8 @@ RangeServer::RangeServer(PropertiesPtr &props, ConnectionManagerPtr &conn_mgr,
     m_app_queue(app_queue), m_hyperspace(hyperspace), m_timer_handler(0),
     m_group_commit_timer_handler(0), m_query_cache(0),
     m_last_revision(TIMESTAMP_MIN), m_last_metrics_update(0), m_loadavg_accum(0.0),
-    m_page_in_accum(0), m_page_out_accum(0), m_bytes_scanned_accum(0), m_bytes_written_accum(0),
-    m_disk_bytes_read_accum(0), m_metric_samples(0), m_pending_metrics_updates(0)
+    m_page_in_accum(0), m_page_out_accum(0), m_metric_samples(0),
+    m_pending_metrics_updates(0)
 {
 
   uint16_t port;
@@ -2543,8 +2543,8 @@ void RangeServer::get_statistics(ResponseCallbackGetStatistics *cb) {
   m_loadavg_accum += m_stats->system.loadavg_stat.loadavg[0];
   m_page_in_accum += m_stats->system.swap_stat.page_in;
   m_page_out_accum += m_stats->system.swap_stat.page_out;
-  m_bytes_scanned_accum += m_server_stats->get_scan_bytes(collector_id);
-  m_bytes_written_accum += m_server_stats->get_update_bytes(collector_id);
+  m_load_factors.bytes_scanned += m_server_stats->get_scan_bytes(collector_id);
+  m_load_factors.bytes_written += m_server_stats->get_update_bytes(collector_id);
   m_metric_samples++;
 
   m_stats->set_location(Global::location_initializer->get());
@@ -2635,17 +2635,21 @@ void RangeServer::get_statistics(ResponseCallbackGetStatistics *cb) {
       table_stat.table_id = range_data[ii]->table_id;
     }
 
-    table_stat.scans += range_data[ii]->scans;
-    table_stat.updates += range_data[ii]->updates;
-    table_stat.cells_scanned += range_data[ii]->cells_scanned;
+    table_stat.scans += range_data[ii]->load_factors.scans;
+    m_load_factors.scans += range_data[ii]->load_factors.scans;
+    table_stat.updates += range_data[ii]->load_factors.updates;
+    m_load_factors.updates += range_data[ii]->load_factors.updates;
+    table_stat.cells_scanned += range_data[ii]->load_factors.cells_scanned;
+    m_load_factors.cells_scanned += range_data[ii]->load_factors.cells_scanned;
     table_stat.cells_returned += range_data[ii]->cells_returned;
-    table_stat.bytes_scanned += range_data[ii]->bytes_scanned;
+    table_stat.cells_written += range_data[ii]->load_factors.cells_written;
+    m_load_factors.cells_written += range_data[ii]->load_factors.cells_written;
+    table_stat.bytes_scanned += range_data[ii]->load_factors.bytes_scanned;
     table_stat.bytes_returned += range_data[ii]->bytes_returned;
-    table_stat.cells_written += range_data[ii]->cells_written;
-    table_stat.bytes_written += range_data[ii]->bytes_written;
-    table_stat.disk_bytes_read += range_data[ii]->disk_bytes_read;
-    m_disk_bytes_read_accum += range_data[ii]->disk_bytes_read;
-    table_stat.disk_bytes_read += range_data[ii]->disk_bytes_read;
+    table_stat.bytes_written += range_data[ii]->load_factors.bytes_written;
+    table_stat.disk_bytes_read += range_data[ii]->load_factors.disk_bytes_read;
+    m_load_factors.disk_bytes_read += range_data[ii]->load_factors.disk_bytes_read;
+    table_stat.disk_bytes_read += range_data[ii]->load_factors.disk_bytes_read;
     table_stat.disk_used += range_data[ii]->disk_used;
     table_stat.key_bytes += range_data[ii]->key_bytes;
     table_stat.value_bytes += range_data[ii]->value_bytes;
@@ -2704,13 +2708,17 @@ void RangeServer::get_statistics(ResponseCallbackGetStatistics *cb) {
     time_t rounded_time = (now+(Global::metrics_interval/2)) - ((now+(Global::metrics_interval/2))%Global::metrics_interval);
     if (m_last_metrics_update != 0) {
       double time_interval = (double)now - (double)m_last_metrics_update;
-      String value = format("2:%ld,%.6f,%.2f,%.2f,%.6f,%.6f,%.6f", rounded_time,
+      String value = format("2:%ld,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f", rounded_time,
                             m_loadavg_accum / (double)(m_metric_samples * m_cores),
+                            (double)m_load_factors.disk_bytes_read / time_interval,
+                            (double)m_load_factors.bytes_written / time_interval,
+                            (double)m_load_factors.bytes_scanned / time_interval,
+                            (double)m_load_factors.updates / time_interval,
+                            (double)m_load_factors.scans / time_interval,
+                            (double)m_load_factors.cells_written / time_interval,
+                            (double)m_load_factors.cells_scanned / time_interval,
                             (double)m_page_in_accum / (double)m_metric_samples,
-                            (double)m_page_out_accum / (double)m_metric_samples,
-                            (double)m_bytes_scanned_accum / time_interval,
-                            (double)m_bytes_written_accum / time_interval,
-                            (double)m_disk_bytes_read_accum / time_interval);
+                            (double)m_page_out_accum / (double)m_metric_samples);
       String location = Global::location_initializer->get();
       KeySpec key;
       key.row = location.c_str();
@@ -2731,9 +2739,7 @@ void RangeServer::get_statistics(ResponseCallbackGetStatistics *cb) {
     m_loadavg_accum = 0.0;
     m_page_in_accum = 0;
     m_page_out_accum = 0;
-    m_bytes_scanned_accum = 0;
-    m_bytes_written_accum = 0;
-    m_disk_bytes_read_accum = 0;
+    m_load_factors.reset();
     m_metric_samples = 0;
   }
 

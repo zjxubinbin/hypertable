@@ -207,9 +207,7 @@ namespace Hypertable {
     double                 m_loadavg_accum;
     uint64_t               m_page_in_accum;
     uint64_t               m_page_out_accum;
-    uint64_t               m_bytes_scanned_accum;
-    uint64_t               m_bytes_written_accum;
-    uint64_t               m_disk_bytes_read_accum;
+    LoadFactors            m_load_factors;
     size_t                 m_metric_samples;
     size_t                 m_cores;
     CellsBuilder          *m_pending_metrics_updates;
