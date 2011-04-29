@@ -889,7 +889,7 @@ RangeServer::create_scanner(ResponseCallbackCreateScanner *cb,
   bool decrement_needed=false;
   const char *row = "";
 
-  HT_DEBUG_OUT <<"Creating scanner:\n"<< *table << *range_spec
+  HT_INFO_OUT <<"Creating scanner:\n"<< *table << *range_spec
                << *scan_spec << HT_END;
 
   if (!m_replay_finished) {

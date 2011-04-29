@@ -169,28 +169,26 @@ implements InputSplit,Comparable<TableSplit> {
 
       if (base_spec.isSetRow_intervals()) {
         for (RowInterval ri : base_spec.getRow_intervals()) {
-          if(m_startrow == null) {
-            if(ri.isSetStart_row() && m_endrow != null) {
-              if(ri.getStart_row().compareTo(new String(m_endrow, "UTF-8")) < 0) {
-                interval.setStart_row(ri.getStart_row());
-                interval.setStart_rowIsSet(true);
-                interval.setStart_inclusive(false);
-                interval.setStart_inclusiveIsSet(true);
-              }
+          if (ri.isSetStart_row()) {
+            if (m_startrow == null ||
+                ri.getStart_row().compareTo(new String(m_startrow, "UTF-8")) > 0) {
+              interval.setStart_row(ri.getStart_row());
+              interval.setStart_rowIsSet(true);
+              interval.setStart_inclusive( ri.isStart_inclusive() );
+              interval.setStart_inclusiveIsSet(true);
             }
-
           }
-          if(m_endrow == null) {
-            if(ri.isSetEnd_row() && m_startrow != null) {
-              if(ri.getEnd_row().compareTo(new String(m_startrow, "UTF-8")) >= 0) {
-                interval.setEnd_row(ri.getEnd_row());
-                interval.setEnd_rowIsSet(true);
-                interval.setEnd_inclusive(true);
-                interval.setEnd_inclusiveIsSet(true);
-              }
+          if (ri.isSetEnd_row()) {
+            if (m_endrow == null ||
+                ri.getEnd_row().compareTo(new String(m_endrow, "UTF-8")) < 0) {
+              interval.setEnd_row(ri.getEnd_row());
+              interval.setEnd_rowIsSet(true);
+              interval.setEnd_inclusive( ri.isEnd_inclusive() );
+              interval.setEnd_inclusiveIsSet(true);
             }
-
           }
+          // Only allowing a single row interval
+          break;
         }
       }
     }
