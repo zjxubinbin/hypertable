@@ -521,6 +521,8 @@ implements org.apache.hadoop.mapred.InputFormat<Text, Text>, JobConfigurable {
       for (final org.hypertable.thriftgen.TableSplit ts : tsplits) {
         boolean skip = false;
 
+        System.out.println(ts);
+
         if (m_base_spec.isSetRow_intervals()) {
           for (RowInterval ri : m_base_spec.getRow_intervals()) {
 
@@ -547,7 +549,7 @@ implements org.apache.hadoop.mapred.InputFormat<Text, Text>, JobConfigurable {
         byte [] start_row = (ts.start_row == null) ? null : ts.start_row.getBytes("UTF-8");
         byte [] end_row = (ts.end_row == null) ? null : ts.end_row.getBytes("UTF-8");
 
-        TableSplit split = new TableSplit(tablename.getBytes("UTF-8"), start_row, end_row, ts.ip_address);
+        TableSplit split = new TableSplit(tablename.getBytes("UTF-8"), start_row, end_row, ts.hostname);
         splits.add(split);
       }
 
