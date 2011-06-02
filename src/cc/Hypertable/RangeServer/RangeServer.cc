@@ -3081,7 +3081,6 @@ RangeServer::relinquish_range(ResponseCallback *cb, const TableIdentifier *table
 
     m_live_map->get(table->id, table_info);
 
-    /** Remove the range **/
     if (!table_info->get_range(range_spec, range))
       HT_THROW(Error::RANGESERVER_RANGE_NOT_FOUND,
                format("%s[%s..%s]", table->id, range_spec->start_row, range_spec->end_row));
@@ -3091,8 +3090,8 @@ RangeServer::relinquish_range(ResponseCallback *cb, const TableIdentifier *table
     cb->response_ok();
   }
   catch (Hypertable::Exception &e) {
-    HT_ERROR_OUT << e << HT_END;
     int error = 0;
+    HT_INFO_OUT << e << HT_END;
     if (cb && (error = cb->error(e.code(), e.what())) != Error::OK)
       HT_ERRORF("Problem sending error response - %s", Error::get_text(error));
   }
