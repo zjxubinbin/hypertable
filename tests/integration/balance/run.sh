@@ -7,7 +7,7 @@ WRITE_SIZE=${WRITE_SIZE:-"40000000"}
 RS1_PIDFILE=$HT_HOME/run/Hypertable.RangeServer.rs1.pid
 RS2_PIDFILE=$HT_HOME/run/Hypertable.RangeServer.rs2.pid
 
-$HT_HOME/bin/start-test-servers.sh --clear --no-thriftbroker --no-rangeserver
+$HT_HOME/bin/start-test-servers.sh --clear --no-rangeserver
 
 $HT_HOME/bin/ht Hypertable.RangeServer --verbose --pidfile=$RS1_PIDFILE \
    --Hypertable.RangeServer.ProxyName=rs1 \
@@ -32,7 +32,41 @@ $HT_HOME/bin/ht ht_load_generator update \
     --Field.value.size=1000 \
     --max-bytes=$WRITE_SIZE
 
-#sleep 5
+sleep 3
+
+echo "shutdown; quit;" | $HT_HOME/bin/ht rsclient localhost:38061
+echo "shutdown; quit;" | $HT_HOME/bin/ht rsclient localhost:38060
+
+sleep 3
+
+$HT_HOME/bin/ht Hypertable.RangeServer --verbose --pidfile=$RS1_PIDFILE \
+   --Hypertable.RangeServer.ProxyName=rs1 \
+   --Hypertable.RangeServer.Port=38062 2>1 >> rangeserver.rs1.output&
+
+$HT_HOME/bin/ht Hypertable.RangeServer --verbose --pidfile=$RS2_PIDFILE \
+   --Hypertable.RangeServer.ProxyName=rs2 \
+   --Hypertable.RangeServer.Port=38063 2>1 >> rangeserver.rs2.output&
+
+sleep 3
+
+echo "About to load data ... " + `date`
+
+#
+# Load Test
+#
+
+$HT_HOME/bin/ht ht_load_generator update \
+    --Hypertable.Mutator.FlushDelay=50 \
+    --rowkey.component.0.type=integer \
+    --rowkey.component.0.format="%010lld" \
+    --rowkey.component.0.min=0 \
+    --rowkey.component.0.max=10000 \
+    --Field.value.size=1000 \
+    --max-bytes=100000000 2>1 > load.output&
+
+for ((i=0; i<100; i++)) ; do
+  $SCRIPT_DIR/generate_range_move.py | $HT_HOME/bin/ht shell --batch
+done
 
 #$HT_HOME/bin/ht shell --batch < $SCRIPT_DIR/dump-table.hql > keys.output
 
