@@ -37,7 +37,11 @@ sleep 3
 echo "shutdown; quit;" | $HT_HOME/bin/ht rsclient localhost:38061
 echo "shutdown; quit;" | $HT_HOME/bin/ht rsclient localhost:38060
 
-sleep 3
+sleep 1
+
+kill -9 `cat $HT_HOME/run/Hypertable.RangeServer.rs?.pid`
+
+sleep 1
 
 $HT_HOME/bin/ht Hypertable.RangeServer --verbose --pidfile=$RS1_PIDFILE \
    --Hypertable.RangeServer.ProxyName=rs1 \
@@ -64,9 +68,11 @@ $HT_HOME/bin/ht ht_load_generator update \
     --Field.value.size=1000 \
     --max-bytes=100000000 2>1 > load.output&
 
-for ((i=0; i<100; i++)) ; do
+for ((i=0; i<20; i++)) ; do
   $SCRIPT_DIR/generate_range_move.py | $HT_HOME/bin/ht shell --batch
 done
+
+kill -9 `cat $HT_HOME/run/Hypertable.RangeServer.rs?.pid`
 
 #$HT_HOME/bin/ht shell --batch < $SCRIPT_DIR/dump-table.hql > keys.output
 
