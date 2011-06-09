@@ -25,10 +25,12 @@ $HT_HOME/bin/ht shell --no-prompt < $SCRIPT_DIR/create-table.hql
 
 $HT_HOME/bin/ht ht_load_generator update \
     --Hypertable.Mutator.FlushDelay=50 \
+    --rowkey.component.0.order=random \
     --rowkey.component.0.type=integer \
     --rowkey.component.0.format="%010lld" \
     --rowkey.component.0.min=0 \
-    --rowkey.component.0.max=10000 \
+    --rowkey.component.0.max=1000000 \
+    --row-seed=1 \
     --Field.value.size=1000 \
     --max-bytes=$WRITE_SIZE
 
@@ -41,8 +43,6 @@ sleep 1
 
 kill -9 `cat $HT_HOME/run/Hypertable.RangeServer.rs?.pid`
 
-sleep 1
-
 $HT_HOME/bin/ht Hypertable.RangeServer --verbose --pidfile=$RS1_PIDFILE \
    --Hypertable.RangeServer.ProxyName=rs1 \
    --Hypertable.RangeServer.Port=38062 2>1 >> rangeserver.rs1.output&
@@ -51,7 +51,7 @@ $HT_HOME/bin/ht Hypertable.RangeServer --verbose --pidfile=$RS2_PIDFILE \
    --Hypertable.RangeServer.ProxyName=rs2 \
    --Hypertable.RangeServer.Port=38063 2>1 >> rangeserver.rs2.output&
 
-sleep 3
+sleep 10
 
 echo "About to load data ... " + `date`
 
@@ -60,20 +60,73 @@ echo "About to load data ... " + `date`
 #
 
 $HT_HOME/bin/ht ht_load_generator update \
-    --Hypertable.Mutator.FlushDelay=50 \
+    --Hypertable.Mutator.FlushDelay=20 \
+    --Hypertable.Mutator.ScatterBuffer.FlushLimit.PerServer=50000 \
+    --rowkey.component.0.order=random \
     --rowkey.component.0.type=integer \
     --rowkey.component.0.format="%010lld" \
     --rowkey.component.0.min=0 \
-    --rowkey.component.0.max=10000 \
-    --Field.value.size=1000 \
+    --rowkey.component.0.max=1000000 \
+    --row-seed=2 \
+    --Field.value.size=5000 \
     --max-bytes=100000000 2>1 > load.output&
 
-for ((i=0; i<20; i++)) ; do
-  $SCRIPT_DIR/generate_range_move.py | $HT_HOME/bin/ht shell --batch
+LOAD_PID=${!}
+
+for ((i=0; i<15; i++)) ; do
+  HQL_COMMAND=`$SCRIPT_DIR/generate_range_move.py 4`
+  echo "Issuing HQL: $HQL_COMMAND"
+  echo $HQL_COMMAND | $HT_HOME/bin/ht shell --batch
 done
 
+wait $LOAD_PID
+
+echo "use '/'; select * from LoadTest KEYS_ONLY;" | $HT_HOME/bin/ht shell --batch > dump.output
+
+if [ ! -e dump.golden ] ; then
+  cp $SCRIPT_DIR/dump.golden.gz .
+  gzip -d dump.golden.gz
+fi
+
+diff dump.output dump.golden
+if [ $? != 0 ] ; then
+  kill -9 `cat $HT_HOME/run/Hypertable.RangeServer.rs?.pid`
+  $HT_HOME/bin/clean-database.sh
+  exit 1
+fi
+
+$HT_HOME/bin/ht ht_load_generator query \
+    --rowkey.component.0.order=random \
+    --rowkey.component.0.type=integer \
+    --rowkey.component.0.format="%010lld" \
+    --rowkey.component.0.min=0 \
+    --rowkey.component.0.max=1000000 \
+    --row-seed=3 \
+    --Field.value.size=1000 \
+    --max-keys=50000 2>1 > query.output&
+
+QUERY_PID=${!}
+
+for ((i=0; i<15; i++)) ; do
+  HQL_COMMAND=`$SCRIPT_DIR/generate_range_move.py 4`
+  echo "Issuing HQL: $HQL_COMMAND"
+  echo $HQL_COMMAND | $HT_HOME/bin/ht shell --batch
+done
+
+wait $QUERY_PID
+
+fgrep ERROR query.output > errors.txt
+
+if [ -s error.$TEST_ID ] ; then
+  kill -9 `cat $HT_HOME/run/Hypertable.RangeServer.rs?.pid`
+  $HT_HOME/bin/clean-database.sh
+  exit 1
+fi
+
+
 kill -9 `cat $HT_HOME/run/Hypertable.RangeServer.rs?.pid`
+$HT_HOME/bin/clean-database.sh
 
-#$HT_HOME/bin/ht shell --batch < $SCRIPT_DIR/dump-table.hql > keys.output
+exit 0
 
-#diff keys.output ${SCRIPT_DIR}/keys.golden
+

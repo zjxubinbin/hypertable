@@ -35,16 +35,18 @@ namespace Hypertable {
    */
   class BalancePlan : public ReferenceCount {
   public:
-
+    BalancePlan() : duration_millis(0) { }
     size_t encoded_length() const;
     void encode(uint8_t **bufp) const;
     void decode(const uint8_t **bufp, size_t *remainp);
 
     void clear() {
       moves.clear();
+      duration_millis = 0;
     }
 
     std::vector<RangeMoveSpecPtr> moves;
+    uint32_t duration_millis;
   };
   typedef intrusive_ptr<BalancePlan> BalancePlanPtr;
 

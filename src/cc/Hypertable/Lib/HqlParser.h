@@ -411,6 +411,14 @@ namespace Hypertable {
       ParserState &state;
     };
 
+    struct balance_set_duration {
+      balance_set_duration(ParserState &state) : state(state) { }
+      void operator()(size_t duration) const {
+        state.balance_plan.duration_millis = 1000*duration;
+      }
+      ParserState &state;
+    };
+
     struct set_if_exists {
       set_if_exists(ParserState &state) : state(state) { }
       void operator()(char const *str, char const *end) const {
@@ -1578,6 +1586,7 @@ namespace Hypertable {
           Token CREATE       = as_lower_d["create"];
           Token DROP         = as_lower_d["drop"];
           Token BALANCE      = as_lower_d["balance"];
+          Token DURATION     = as_lower_d["duration"];
           Token ADD          = as_lower_d["add"];
           Token USE          = as_lower_d["use"];
           Token RENAME       = as_lower_d["rename"];
@@ -1772,6 +1781,7 @@ namespace Hypertable {
 
           balance_statement
             = BALANCE >> *(range_move_spec_list)
+                      >> *(balance_option_spec)
             ;
 
           range_move_spec_list
@@ -1785,6 +1795,10 @@ namespace Hypertable {
             >> string_literal[set_source(self.state)] >> COMMA
             >> string_literal[set_destination(self.state)]
             >> RPAREN
+            ;
+
+          balance_option_spec
+            = DURATION >> EQUAL >> uint_p[balance_set_duration(self.state)]
             ;
 
           drop_range_statement
@@ -2367,6 +2381,7 @@ namespace Hypertable {
           BOOST_SPIRIT_DEBUG_RULE(replay_log_statement);
           BOOST_SPIRIT_DEBUG_RULE(replay_commit_statement);
           BOOST_SPIRIT_DEBUG_RULE(balance_statement);
+          BOOST_SPIRIT_DEBUG_RULE(balance_option_spec);
           BOOST_SPIRIT_DEBUG_RULE(range_move_spec_list);
           BOOST_SPIRIT_DEBUG_RULE(range_move_spec);
 #endif
@@ -2407,7 +2422,8 @@ namespace Hypertable {
           drop_range_statement, replay_start_statement, replay_log_statement,
           replay_commit_statement, cell_interval, cell_predicate,
           cell_spec, wait_for_maintenance_statement, move_range_statement,
-          balance_statement, range_move_spec_list, range_move_spec;
+          balance_statement, range_move_spec_list, range_move_spec,
+          balance_option_spec;
       };
 
       ParserState &state;

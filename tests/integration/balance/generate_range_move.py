@@ -6,11 +6,11 @@ import time
 from hypertable.thriftclient import *
 from hyperthrift.gen.ttypes import *
 
-"""
 if (len(sys.argv) < 2):
-  print sys.argv[0], "<table>"
+  print sys.argv[0], "<duration-seconds>"
   sys.exit(1);
-"""
+
+duration=int(sys.argv[1])
 
 try:
   client = ThriftClient("localhost", 38080)
@@ -62,9 +62,9 @@ try:
     sys.exit(1)           
 
   if ranges[offset]['StartRow'] is None:
-    print 'balance (\"%s\"[..\"%s\"], \"%s\", \"%s\");' % (ranges[offset]['TableId'], ranges[offset]['EndRow'], ranges[offset]['Location'], destination)
+    print 'balance (\"%s\"[..\"%s\"], \"%s\", \"%s\") duration=%d;' % (ranges[offset]['TableId'], ranges[offset]['EndRow'], ranges[offset]['Location'], destination, duration)
   else:
-    print 'balance (\"%s\"[\"%s\"..\"%s\"], \"%s\", \"%s\");' % (ranges[offset]['TableId'], ranges[offset]['StartRow'], ranges[offset]['EndRow'], ranges[offset]['Location'], destination)
+    print 'balance (\"%s\"[\"%s\"..\"%s\"], \"%s\", \"%s\") duration=%d;' % (ranges[offset]['TableId'], ranges[offset]['StartRow'], ranges[offset]['EndRow'], ranges[offset]['Location'], destination, duration)
 
 #  for range in ranges:
 #    print range

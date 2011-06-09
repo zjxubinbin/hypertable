@@ -94,25 +94,28 @@ void OperationBalance::execute() {
     {
       RangeServerClient rsc(m_context->comm);
       CommAddress addr;
-    
-      foreach (RangeMoveSpecPtr &move, m_plan->moves) {
-        addr.set_proxy(move->source_location);
-        try {
-          rsc.relinquish_range(addr, move->table, move->range);
-          m_context->balancer->wait_for_complete(move, 120000);
-          HT_INFO("Finished waiting.");
+
+      if (!m_plan->moves.empty()) {
+        uint32_t wait_millis = m_plan->duration_millis / m_plan->moves.size();
+
+        foreach (RangeMoveSpecPtr &move, m_plan->moves) {
+          addr.set_proxy(move->source_location);
+          try {
+            rsc.relinquish_range(addr, move->table, move->range);
+            poll(0, 0, wait_millis);
+            //m_context->balancer->wait_for_complete(move, wait_millis);
+          }
+          catch (Exception &e) {
+            move->complete = true;
+            move->error = e.code();
+            m_context->balancer->move_complete(move->table, move->range, move->error);
+          }
         }
-        catch (Exception &e) {
-          move->complete = true;
-          move->error = e.code();
-          m_context->balancer->move_complete(move->table, move->range, move->error);
-        }
+        foreach (RangeMoveSpecPtr &move, m_plan->moves)
+          HT_INFO_OUT << *move << HT_END;
       }
-      foreach (RangeMoveSpecPtr &move, m_plan->moves)
-        HT_INFO_OUT << *move << HT_END;
-      HT_INFO("About to deregister...");
+
       m_context->balancer->deregister_plan(m_plan);
-      HT_INFO("Finished deregister.");
     }
     complete_ok();
     break;
