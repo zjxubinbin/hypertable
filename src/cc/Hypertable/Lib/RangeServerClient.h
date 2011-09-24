@@ -206,6 +206,50 @@ namespace Hypertable {
                 uint32_t count, StaticBuffer &buffer, uint32_t flags,
                 Timer &timer);
 
+    /** Issues a "get_unique_ids" request asynchronously.
+     *
+     * @param addr address of RangeServer
+     * @param table table identifier
+     * @param count number of unique ids requested
+     * @param handler response handler
+     */
+    void get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                   uint32_t count, DispatchHandler *handler);
+
+    /** Issues a "get_unique_ids" request asynchronously with timer.
+     *
+     * @param addr address of RangeServer
+     * @param table table identifier
+     * @param count number of unique ids requested
+     * @param buffer buffer holding key/value pairs
+     * @param flags update flags
+     * @param handler response handler
+     * @param timer timer
+     */
+    void get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                   uint32_t count, DispatchHandler *handler, Timer &timer);
+
+    /** Issues a synchronous "get_unique_ids" request.
+     *
+     * @param addr address of RangeServer
+     * @param table table identifier
+     * @param count number of unique ids requested
+     * @param unique_ids reference to vector to hold returned unique ids
+     */
+    void get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                   uint32_t count, std::vector<int64_t> &unique_ids);
+
+    /** Issues a synchronous "update" request with timer.
+     *
+     * @param addr address of RangeServer
+     * @param table table identifier
+     * @param count number of unique ids requested
+     * @param unique_ids reference to vector to hold returned unique ids
+     * @param timer timer
+     */
+    void get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                   uint32_t count, std::vector<int64_t> &unique_ids, Timer &timer);
+
     /** Issues a "create scanner" request asynchronously.
      *
      * @param addr address of RangeServer
@@ -628,6 +672,8 @@ namespace Hypertable {
     void do_update(const CommAddress &addr, const TableIdentifier &table,
                    uint32_t count, StaticBuffer &buffer, uint32_t flags,
                    uint32_t timeout_ms);
+    void do_get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                      uint32_t count, std::vector<int64_t> &unique_ids, uint32_t timeout_ms);
     void do_create_scanner(const CommAddress &addr,
                            const TableIdentifier &table, const RangeSpec &range,
                            const ScanSpec &scan_spec, ScanBlock &scan_block,

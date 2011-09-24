@@ -206,6 +206,61 @@ RangeServerClient::do_update(const CommAddress &addr, const TableIdentifier &tab
              + Protocol::string_format_message(event));
 }
 
+void
+RangeServerClient::get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                             uint32_t count, DispatchHandler *handler) {
+  CommBufPtr cbp(RangeServerProtocol::create_request_get_unique_ids(table, count));
+  send_message(addr, cbp, handler, m_default_timeout_ms);
+}
+
+void
+RangeServerClient::get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                             uint32_t count, DispatchHandler *handler, Timer &timer) {
+  CommBufPtr cbp(RangeServerProtocol::create_request_get_unique_ids(table, count));
+  send_message(addr, cbp, handler, timer.remaining());
+}
+
+
+void
+RangeServerClient::get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                             uint32_t count, std::vector<int64_t> &unique_ids) {
+  do_get_unique_ids(addr, table, count, unique_ids, m_default_timeout_ms);
+}
+
+void
+RangeServerClient::get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                             uint32_t count, std::vector<int64_t> &unique_ids, Timer &timer) {
+  do_get_unique_ids(addr, table, count, unique_ids, timer.remaining());
+}
+
+void
+RangeServerClient::do_get_unique_ids(const CommAddress &addr, const TableIdentifier &table,
+                                uint32_t count, std::vector<int64_t> &unique_ids, uint32_t timeout_ms) {
+  DispatchHandlerSynchronizer sync_handler;
+  EventPtr event;
+  CommBufPtr cbp(RangeServerProtocol::create_request_get_unique_ids(table, count));
+  send_message(addr, cbp, &sync_handler, timeout_ms);
+
+  if (!sync_handler.wait_for_reply(event))
+    HT_THROW((int)Protocol::response_code(event),
+             String("RangeServer get_unique_ids() failure : ")
+             + Protocol::string_format_message(event));
+
+  size_t remaining = event->payload_len - 4;
+  const uint8_t *ptr = event->payload + 4;
+
+  uint16_t new_count = Serialization::decode_i16(&ptr, &remaining);
+  int64_t starting_guid = (int64_t)Serialization::decode_i64(&ptr, &remaining);
+
+  HT_ASSERT(new_count == count);
+  
+  unique_ids.reserve(count);
+
+  for (uint16_t i=0; i<count; i++)
+    unique_ids.push_back(starting_guid + (int64_t)i);
+
+}
+
 
 
 void

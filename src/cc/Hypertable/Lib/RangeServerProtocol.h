@@ -60,7 +60,8 @@ namespace Hypertable {
     static const uint64_t COMMAND_RELINQUISH_RANGE     = 21;
     static const uint64_t COMMAND_HEAPCHECK            = 22;
     static const uint64_t COMMAND_METADATA_SYNC        = 23;
-    static const uint64_t COMMAND_MAX                  = 24;
+    static const uint64_t COMMAND_GET_UNIQUE_IDS       = 24;
+    static const uint64_t COMMAND_MAX                  = 25;
 
     static const char *m_command_strings[];
 
@@ -133,6 +134,14 @@ namespace Hypertable {
      */
     static CommBuf *create_request_update(const TableIdentifier &table,
                                           uint32_t count, StaticBuffer &buffer, uint32_t flags);
+
+    /** Creates a "get_unique_ids" request message.
+     *
+     * @param table table identifier
+     * @param count number of key/value pairs in buffer
+     * @return protocol message
+     */
+    static CommBuf *create_request_get_unique_ids(const TableIdentifier &table, uint32_t count);
 
     /** Creates an "update schema" message. Used to update schema for a
      * table

@@ -54,6 +54,7 @@ namespace Hypertable {
     "relinquish range",
     "heapcheck",
     "metadata sync",
+    "get unique ids",
     (const char *)0
   };
 
@@ -151,6 +152,15 @@ namespace Hypertable {
     table.encode(cbuf->get_data_ptr_address());
     cbuf->append_i32(count);
     cbuf->append_i32(flags);
+    return cbuf;
+  }
+
+  CommBuf *
+  RangeServerProtocol::create_request_get_unique_ids(const TableIdentifier &table, uint32_t count) {
+    CommHeader header(COMMAND_GET_UNIQUE_IDS);
+    CommBuf *cbuf = new CommBuf(header, 4 + table.encoded_length());
+    table.encode(cbuf->get_data_ptr_address());
+    cbuf->append_i32(count);
     return cbuf;
   }
 
