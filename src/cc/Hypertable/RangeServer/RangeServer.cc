@@ -2370,28 +2370,9 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
 
     }
 
-    // Iterate through all of the ranges, committing any transferring updates
-    uint32_t committed_transfer_data = 0;
-    for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin(); iter != table_update->range_map.end(); ++iter) {
-      if ((*iter).second->transfer_buf.ptr > (*iter).second->transfer_buf.mark) {
-        committed_transfer_data += (*iter).second->transfer_buf.ptr - (*iter).second->transfer_buf.mark;
-        if ((error = (*iter).second->transfer_log->write((*iter).second->transfer_buf, (*iter).second->latest_transfer_revision)) != Error::OK) {
-          table_update->error = error;
-          table_update->error_msg = format("Problem writing %d bytes to transfer log",
-                                           (int)(*iter).second->transfer_buf.fill());
-          HT_ERRORF("%s - %s", table_update->error_msg.c_str(), Error::get_text(error));
-          break;
-        }
-      }
-    }
-
-    if (table_update->error != Error::OK)
-      HT_WARNF("Table update for %s aborted, up to %u bytes of commits written to transfer logs",
-               table_update->id.id, committed_transfer_data);
-    else
-      HT_DEBUGF("Added %d (%d transferring) updates to '%s'",
-                table_update->total_added, table_update->transfer_count,
-                table_update->id.id);
+    HT_DEBUGF("Added %d (%d transferring) updates to '%s'",
+	      table_update->total_added, table_update->transfer_count,
+	      table_update->id.id);
     if (!table_update->id.is_metadata())
       total_added += table_update->total_added;
   }
@@ -2414,7 +2395,23 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
     }
   }
 
+  uint32_t committed_transfer_data = 0;
+
   foreach (TableUpdate *table_update, updates) {
+
+    // Iterate through all of the ranges, committing any transferring updates
+    for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin(); iter != table_update->range_map.end(); ++iter) {
+      if ((*iter).second->transfer_buf.ptr > (*iter).second->transfer_buf.mark) {
+        committed_transfer_data += (*iter).second->transfer_buf.ptr - (*iter).second->transfer_buf.mark;
+        if ((error = (*iter).second->transfer_log->write((*iter).second->transfer_buf, (*iter).second->latest_transfer_revision)) != Error::OK) {
+          table_update->error = error;
+          table_update->error_msg = format("Problem writing %d bytes to transfer log",
+                                           (int)(*iter).second->transfer_buf.fill());
+          HT_ERRORF("%s - %s", table_update->error_msg.c_str(), Error::get_text(error));
+          break;
+        }
+      }
+    }
 
     if (table_update->error != Error::OK)
       continue;
@@ -2579,10 +2576,12 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
             encode_i32(&ptr, request->send_back_vector[i].count);
             encode_i32(&ptr, request->send_back_vector[i].offset);
             encode_i32(&ptr, request->send_back_vector[i].len);
+	    /*
             HT_INFOF("Sending back error %x, count %d, offset %d, len %d, table id %s",
                      request->send_back_vector[i].error, request->send_back_vector[i].count,
                      request->send_back_vector[i].offset, request->send_back_vector[i].len,
                      table_update->id.id);
+	    */
           }
           if ((error = cb.response(ext)) != Error::OK)
             HT_ERRORF("Problem sending OK response - %s", Error::get_text(error));
