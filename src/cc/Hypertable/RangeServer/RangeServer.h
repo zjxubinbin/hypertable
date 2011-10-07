@@ -157,8 +157,8 @@ namespace Hypertable {
     void transform_key(ByteString &bskey, DynamicBuffer *dest_bufp,
                        int64_t revision, int64_t *revisionp);
     void update_qualify_and_transform(boost::xtime expire_time);
-    void update_commit_and_add();
-    void update_send_response();
+    void update_commit();
+    void update_add_and_respond();
 
     class UpdateContext {
     public:

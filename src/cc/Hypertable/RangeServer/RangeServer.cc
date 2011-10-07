@@ -1880,7 +1880,7 @@ RangeServer::commit_log_sync(ResponseCallback *cb, const TableIdentifier *table)
 
   // Check for group commit
   if (schema->get_group_commit_interval() > 0) {
-    m_group_commit->add(cb->get_event(), schema, table, 0, buffer, 0, true);
+    m_group_commit->add(cb->get_event(), schema, table, 0, buffer, 0);
     return;
   }
 
@@ -1892,7 +1892,7 @@ RangeServer::commit_log_sync(ResponseCallback *cb, const TableIdentifier *table)
     table_update->total_count = 0;
     table_update->total_buffer_size = 0;;
     table_update->flags = 0;
-    table_update->do_sync = true;
+    table_update->sync = true;
     request->buffer = buffer;
     request->count = 0;
     request->event = cb->get_event();
@@ -1960,7 +1960,7 @@ RangeServer::update(ResponseCallbackUpdate *cb, const TableIdentifier *table,
 
   // Check for group commit
   if (schema->get_group_commit_interval() > 0) {
-    m_group_commit->add(cb->get_event(), schema, table, count, buffer, flags, false);
+    m_group_commit->add(cb->get_event(), schema, table, count, buffer, flags);
     delete table_update;
     return;
   }
@@ -2001,9 +2001,9 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
 
   update_qualify_and_transform(expire_time);
 
-  update_commit_and_add();
+  update_commit();
 
-  update_send_response();
+  update_add_and_respond();
 
 }
 
@@ -2404,11 +2404,13 @@ void RangeServer::update_qualify_and_transform(boost::xtime expire_time) {
 
 
 
-void RangeServer::update_commit_and_add() {
+void RangeServer::update_commit() {
   ScopedLock method_lock(m_update_commit_mutex);
   UpdateContext *uc;
   SerializedKey key;
   int error = Error::OK;
+  uint32_t committed_transfer_data = 0;
+  bool user_log_needs_syncing = false;
 
   // Dequeue next update
   {
@@ -2428,9 +2430,6 @@ void RangeServer::update_commit_and_add() {
                 (int)uc->root_buf.fill(), Error::get_text(error));
     }
   }
-
-  uint32_t committed_transfer_data = 0;
-  bool user_log_needs_syncing = false;
 
   foreach (TableUpdate *table_update, uc->updates) {
 
@@ -2457,27 +2456,19 @@ void RangeServer::update_commit_and_add() {
     if (table_update->go_buf.ptr > table_update->go_buf.mark) {
       CommitLog *log;
 
-      bool sync = true;
-      if (table_update->commit_interval > 0) {
-        sync = false;
-        user_log_needs_syncing = true;
-        HT_ASSERT(!table_update->id.is_metadata());
+      bool sync = false;
+      if (table_update->id.is_user()) {
+        log = Global::user_log;
+	if ((table_update->flags & RangeServerProtocol::UPDATE_FLAG_NO_LOG_SYNC) == 0)
+	  user_log_needs_syncing = true;
       }
-      else if ((table_update->flags & RangeServerProtocol::UPDATE_FLAG_NO_LOG_SYNC) ==
-               RangeServerProtocol::UPDATE_FLAG_NO_LOG_SYNC && !table_update->do_sync)
-        sync = false;
-
-      if (table_update->id.is_metadata()) {
-        HT_ASSERT(sync == true);
+      else if (table_update->id.is_metadata()) {
+	sync = true;
         log = Global::metadata_log;
       }
       else if (table_update->id.is_system()) {
+	sync = true;
         log = Global::system_log;
-      }
-      else {
-        log = Global::user_log;
-        if (sync)
-          uc->total_syncs++;
       }
 
       if ((error = log->write(table_update->go_buf, uc->last_revision, sync)) != Error::OK) {
@@ -2490,10 +2481,53 @@ void RangeServer::update_commit_and_add() {
         continue;
       }
     }
-    else {
-      if (table_update->do_sync == true)
-        user_log_needs_syncing = true;
+    else if (table_update->sync)
+      user_log_needs_syncing = true;
+
+  }
+
+  // Now sync the USER commit log if needed
+  if (user_log_needs_syncing) {
+    size_t retry_count = 0;
+    uc->total_syncs++;
+    while ((error = Global::user_log->sync()) != Error::OK) {
+      HT_ERRORF("Problem sync'ing user log fragment (%s) - %s",
+                Global::user_log->get_current_fragment_file().c_str(),
+                Error::get_text(error));
+      if (++retry_count == 6)
+        break;
+      poll(0, 0, 10000);
     }
+  }
+
+  // Enqueue update
+  {
+    ScopedLock lock(m_update_response_queue_mutex);
+    m_update_response_queue.push_back(uc);
+  }
+}
+
+
+void RangeServer::update_add_and_respond() {
+  ScopedLock method_lock(m_update_response_mutex);
+  UpdateContext *uc;
+  SerializedKey key;
+  int error = Error::OK;
+
+  // Dequeue next update
+  {
+    ScopedLock lock(m_update_response_queue_mutex);
+    //HT_ASSERT(!m_update_response_queue.empty());
+    if (m_update_response_queue.empty())
+      return;
+    uc = m_update_response_queue.front();
+    m_update_response_queue.pop_front();
+  }
+
+  /**
+   *  Insert updates into Ranges
+   */
+  foreach (TableUpdate *table_update, uc->updates) {
 
     // Iterate through all of the ranges, inserting updates
     for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin(); iter != table_update->range_map.end(); ++iter) {
@@ -2534,21 +2568,9 @@ void RangeServer::update_commit_and_add() {
     }
   }
 
-  // Now sync the USER commit log if needed
-  if (user_log_needs_syncing) {
-    size_t retry_count = 0;
-    uc->total_syncs++;
-    while ((error = Global::user_log->sync()) != Error::OK) {
-      HT_ERRORF("Problem sync'ing user log fragment (%s) - %s",
-                Global::user_log->get_current_fragment_file().c_str(),
-                Error::get_text(error));
-      if (++retry_count == 6)
-        break;
-      poll(0, 0, 10000);
-    }
-  }
-
-  // decrement usage counters for all referenced ranges
+  /**
+   * Decrement usage counters for all referenced ranges
+   */
   foreach (TableUpdate *table_update, uc->updates) {
     for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin(); iter != table_update->range_map.end(); ++iter) {
       if ((*iter).second->range_blocked)
@@ -2556,34 +2578,9 @@ void RangeServer::update_commit_and_add() {
     }
   }
 
-  // Enqueue update
-  {
-    ScopedLock lock(m_update_response_queue_mutex);
-    m_update_response_queue.push_back(uc);
-  }
-}
-
-
-void RangeServer::update_send_response() {
-  ScopedLock method_lock(m_update_response_mutex);
-  UpdateContext *uc;
-  SerializedKey key;
-  int error = Error::OK;
-
-  // Dequeue next update
-  {
-    ScopedLock lock(m_update_response_queue_mutex);
-    //HT_ASSERT(!m_update_response_queue.empty());
-    if (m_update_response_queue.empty())
-      return;
-    uc = m_update_response_queue.front();
-    m_update_response_queue.pop_front();
-  }
-
   /**
    * wait for these ranges to complete maintenance
    */
-
   foreach (TableUpdate *table_update, uc->updates) {
 
     /**
