@@ -1853,11 +1853,10 @@ void
 RangeServer::commit_log_sync(ResponseCallback *cb, const TableIdentifier *table) {
   String errmsg;
   int error = Error::OK;
-  TableUpdate table_update;
+  TableUpdate *table_update = new TableUpdate();
   StaticBuffer buffer(0);
   SchemaPtr schema;
   std::vector<TableUpdate *> table_update_vector;
-  UpdateRequest request;
 
   HT_DEBUG_OUT <<"received commit_log_sync request for table "<< table->id<< HT_END;
 
@@ -1866,15 +1865,15 @@ RangeServer::commit_log_sync(ResponseCallback *cb, const TableIdentifier *table)
       return;
   }
 
-  m_live_map->get(table, table_update.table_info);
+  m_live_map->get(table, table_update->table_info);
 
   // verify schema
-  schema = table_update.table_info->get_schema();
+  schema = table_update->table_info->get_schema();
   if (schema.get()->get_generation() != table->generation) {
     if ((error = cb->error(Error::RANGESERVER_GENERATION_MISMATCH,
         format("Commit log sync schema generation mismatch for table %s (received %u != %u)",
                table->id, table->generation,
-               table_update.table_info->get_schema()->get_generation()))) != Error::OK)
+               table_update->table_info->get_schema()->get_generation()))) != Error::OK)
       HT_ERRORF("Problem sending error response - %s", Error::get_text(error));
     return;
   }
@@ -1887,18 +1886,19 @@ RangeServer::commit_log_sync(ResponseCallback *cb, const TableIdentifier *table)
 
   // normal sync...
   try {
-    memcpy(&table_update.id, table, sizeof(TableIdentifier));
-    table_update.commit_interval = 0;
-    table_update.total_count = 0;
-    table_update.total_buffer_size = 0;;
-    table_update.flags = 0;
-    table_update.do_sync = true;
-    request.buffer = buffer;
-    request.count = 0;
-    request.event = cb->get_event();
-    table_update.requests.push_back(&request);
+    UpdateRequest *request = new UpdateRequest();
+    memcpy(&table_update->id, table, sizeof(TableIdentifier));
+    table_update->commit_interval = 0;
+    table_update->total_count = 0;
+    table_update->total_buffer_size = 0;;
+    table_update->flags = 0;
+    table_update->do_sync = true;
+    request->buffer = buffer;
+    request->count = 0;
+    request->event = cb->get_event();
+    table_update->requests.push_back(request);
 
-    table_update_vector.push_back(&table_update);
+    table_update_vector.push_back(table_update);
 
     batch_update(table_update_vector, cb->get_event()->expiration_time());
   }
