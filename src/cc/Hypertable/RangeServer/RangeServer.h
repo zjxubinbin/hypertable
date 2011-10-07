@@ -149,12 +149,45 @@ namespace Hypertable {
     void shutdown();
 
   private:
+
     void initialize(PropertiesPtr &);
     void local_recover();
     void replay_log(CommitLogReaderPtr &log_reader);
     void verify_schema(TableInfoPtr &, uint32_t generation);
     void transform_key(ByteString &bskey, DynamicBuffer *dest_bufp,
                        int64_t revision, int64_t *revisionp);
+    void update_qualify_and_transform(boost::xtime expire_time);
+    void update_commit_and_add();
+    void update_send_response();
+
+    class UpdateContext {
+    public:
+      UpdateContext(std::vector<TableUpdate *> &tu) : updates(tu),
+          total_updates(0), total_added(0), total_syncs(0), total_bytes_added(0) { }
+      ~UpdateContext() {
+	foreach(TableUpdate *u, updates)
+	  delete u;
+      }
+      std::vector<TableUpdate *> updates;
+      int64_t auto_revision;
+      SendBackRec send_back;
+      DynamicBuffer root_buf;
+      int64_t last_revision;
+      uint32_t total_updates;
+      uint32_t total_added;
+      uint32_t total_syncs;
+      uint64_t total_bytes_added;
+    };
+
+    Mutex                      m_update_qualify_queue_mutex;
+    Mutex                      m_update_qualify_mutex;
+    std::list<UpdateContext *> m_update_qualify_queue;
+    Mutex                      m_update_commit_queue_mutex;
+    Mutex                      m_update_commit_mutex;
+    std::list<UpdateContext *> m_update_commit_queue;
+    Mutex                      m_update_response_queue_mutex;
+    Mutex                      m_update_response_mutex;
+    std::list<UpdateContext *> m_update_response_queue;
 
     Mutex                  m_mutex;
     Mutex                  m_drop_table_mutex;
@@ -166,8 +199,6 @@ namespace Hypertable {
     bool                   m_metadata_replay_finished;
     bool                   m_system_replay_finished;
     bool                   m_replay_finished;
-    Mutex                  m_update_mutex_a;
-    Mutex                  m_update_mutex_b;
     Mutex                  m_stats_mutex;
     PropertiesPtr          m_props;
     bool                   m_verbose;

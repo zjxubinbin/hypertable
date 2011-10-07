@@ -99,15 +99,7 @@ void GroupCommit::trigger() {
       ++iter;
   }
 
-  if (!updates.empty()) {
+  if (!updates.empty())
     m_range_server->batch_update(updates, expire_time);
-
-    // Free objects
-    foreach (TableUpdate *table_update, updates) {
-      foreach (UpdateRequest *request, table_update->requests)
-        delete request;
-      delete table_update;
-    }
-  }
 
 }

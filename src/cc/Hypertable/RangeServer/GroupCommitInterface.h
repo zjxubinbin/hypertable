@@ -107,6 +107,12 @@ namespace Hypertable {
                     total_buffer_size(0), wait_for_metadata_recovery(false),
                     wait_for_system_recovery(false),
                     transfer_count(0), total_added(0), error(0), do_sync(false) {}
+    ~TableUpdate() {
+      foreach (UpdateRequest *r, requests)
+	delete r;
+      for (hash_map<Range *, RangeUpdateList *>::iterator iter = range_map.begin(); iter != range_map.end(); ++iter)
+	delete (*iter).second;
+    }
     TableIdentifier id;
     std::vector<UpdateRequest *> requests;
     uint32_t flags;

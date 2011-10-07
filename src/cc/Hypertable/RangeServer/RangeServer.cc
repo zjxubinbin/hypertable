@@ -1919,11 +1919,9 @@ RangeServer::commit_log_sync(ResponseCallback *cb, const TableIdentifier *table)
 void
 RangeServer::update(ResponseCallbackUpdate *cb, const TableIdentifier *table,
                     uint32_t count, StaticBuffer &buffer, uint32_t flags) {
-  std::vector<TableUpdate *> table_update_vector;
-  TableUpdate table_update;
-  UpdateRequest request;
   SchemaPtr schema;
   int error;
+  TableUpdate *table_update = new TableUpdate();
 
   if (m_update_delay)
     poll(0, 0, m_update_delay);
@@ -1934,12 +1932,12 @@ RangeServer::update(ResponseCallbackUpdate *cb, const TableIdentifier *table,
     if (table->is_metadata()) {
       if (!wait_for_root_recovery_finish(cb->get_event()->expiration_time()))
 	return;
-      table_update.wait_for_metadata_recovery = true;
+      table_update->wait_for_metadata_recovery = true;
     }
     else if (table->is_system()) {
       if (!wait_for_metadata_recovery_finish(cb->get_event()->expiration_time()))
 	return;
-      table_update.wait_for_system_recovery = true;
+      table_update->wait_for_system_recovery = true;
     }
     else {
       if (!wait_for_recovery_finish(cb->get_event()->expiration_time()))
@@ -1947,15 +1945,15 @@ RangeServer::update(ResponseCallbackUpdate *cb, const TableIdentifier *table,
     }
   }
 
-  m_live_map->get(table, table_update.table_info);
+  m_live_map->get(table, table_update->table_info);
 
   // verify schema
-  schema = table_update.table_info->get_schema();
+  schema = table_update->table_info->get_schema();
   if (schema.get()->get_generation() != table->generation) {
     if ((error = cb->error(Error::RANGESERVER_GENERATION_MISMATCH,
                            format("Update schema generation mismatch for table %s (received %u != %u)",
                                   table->id, table->generation,
-                                  table_update.table_info->get_schema()->get_generation()))) != Error::OK)
+                                  table_update->table_info->get_schema()->get_generation()))) != Error::OK)
       HT_ERRORF("Problem sending error response - %s", Error::get_text(error));
     return;
   }
@@ -1963,23 +1961,28 @@ RangeServer::update(ResponseCallbackUpdate *cb, const TableIdentifier *table,
   // Check for group commit
   if (schema->get_group_commit_interval() > 0) {
     m_group_commit->add(cb->get_event(), schema, table, count, buffer, flags, false);
+    delete table_update;
     return;
   }
 
   // normal update ...
 
-  memcpy(&table_update.id, table, sizeof(TableIdentifier));
-  table_update.commit_interval = 0;
-  table_update.total_count = count;
-  table_update.total_buffer_size = buffer.size;
-  table_update.flags = flags;
+  std::vector<TableUpdate *> table_update_vector;
 
-  request.buffer = buffer;
-  request.count = count;
-  request.event = cb->get_event();
-  table_update.requests.push_back(&request);
+  memcpy(&table_update->id, table, sizeof(TableIdentifier));
+  table_update->commit_interval = 0;
+  table_update->total_count = count;
+  table_update->total_buffer_size = buffer.size;
+  table_update->flags = flags;
 
-  table_update_vector.push_back(&table_update);
+  UpdateRequest *request = new UpdateRequest();
+  request->buffer = buffer;
+  request->count = count;
+  request->event = cb->get_event();
+
+  table_update->requests.push_back(request);
+
+  table_update_vector.push_back(table_update);
 
   batch_update(table_update_vector, cb->get_event()->expiration_time());
 
@@ -1988,35 +1991,50 @@ RangeServer::update(ResponseCallbackUpdate *cb, const TableIdentifier *table,
 
 void
 RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expire_time) {
-  const uint8_t *mod, *mod_end;
-  const char *row, *last_row;
-  bool a_locked = false;
-  bool b_locked = false;
+  UpdateContext *uc = new UpdateContext(updates);
+
+  // Enqueue update
+  {
+    ScopedLock lock(m_update_qualify_queue_mutex);
+    m_update_qualify_queue.push_back(uc);
+  }
+
+  update_qualify_and_transform(expire_time);
+
+  update_commit_and_add();
+
+  update_send_response();
+
+}
+
+
+void RangeServer::update_qualify_and_transform(boost::xtime expire_time) {
+  ScopedLock method_lock(m_update_qualify_mutex);
+  UpdateContext *uc;
   SerializedKey key;
-  SendBackRec send_back;
+  const uint8_t *mod, *mod_end;
+  const char *row;
   String start_row, end_row;
   RangeUpdateList *rulist = 0;
   int error = Error::OK;
-  bool wait_for_maintenance;
   int64_t latest_range_revision;
   RangeTransferInfo transfer_info;
   bool transfer_pending;
   DynamicBuffer *cur_bufp;
   DynamicBuffer *transfer_bufp = 0;
-  CommitLogPtr transfer_log;
-  DynamicBuffer root_buf;
-  RangeUpdate range_update;
-  uint32_t misses = 0;
-  int64_t last_revision;
-  RangePtr range;
-  bool user_log_needs_syncing = false;
   uint32_t go_buf_reset_offset = 0;
   uint32_t root_buf_reset_offset = 0;
-  size_t starting_range_update_count;
-  uint32_t total_updates = 0;
-  uint32_t total_added = 0;
-  uint32_t total_syncs = 0;
-  uint64_t total_bytes_added = 0;
+  CommitLogPtr transfer_log;
+  RangeUpdate range_update;
+  RangePtr range;
+
+  // Dequeue next update
+  {
+    ScopedLock lock(m_update_qualify_queue_mutex);
+    HT_ASSERT(!m_update_qualify_queue.empty());
+    uc = m_update_qualify_queue.front();
+    m_update_qualify_queue.pop_front();
+  }
 
   // This probably shouldn't happen for group commit, but since
   // it's only for testing purposes, we'll leave it here
@@ -2024,18 +2042,15 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
     poll(0, 0, m_update_delay);
 
   // Global commit log is only available after local recovery
-  int64_t auto_revision = Hypertable::get_ts64();
+  uc->auto_revision = Hypertable::get_ts64();
 
   // TODO: Sanity check mod data (checksum validation)
 
-  m_update_mutex_a.lock();
-  a_locked = true;
-
   // hack to workaround xen timestamp issue
-  if (auto_revision < m_last_revision)
-    auto_revision = m_last_revision;
+  if (uc->auto_revision < m_last_revision)
+    uc->auto_revision = m_last_revision;
 
-  foreach (TableUpdate *table_update, updates) {
+  foreach (TableUpdate *table_update, uc->updates) {
 
     HT_DEBUG_OUT <<"Update: "<< table_update->id << HT_END;
 
@@ -2074,15 +2089,15 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
 
     foreach (UpdateRequest *request, table_update->requests) {
 
-      total_updates++;
+      uc->total_updates++;
 
       mod_end = request->buffer.base + request->buffer.size;
       mod = request->buffer.base;
 
       go_buf_reset_offset = table_update->go_buf.fill();
-      root_buf_reset_offset = root_buf.fill();
+      root_buf_reset_offset = uc->root_buf.fill();
 
-      memset(&send_back, 0, sizeof(send_back));
+      memset(&uc->send_back, 0, sizeof(uc->send_back));
 
       while (mod < mod_end) {
         key.ptr = mod;
@@ -2091,12 +2106,12 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
         // If the row key starts with '\0' then the buffer is probably
         // corrupt, so mark the remaing key/value pairs as bad
         if (*row == 0) {
-          send_back.error = Error::BAD_KEY;
-          send_back.count = request->count;  // fix me !!!!
-          send_back.offset = mod - request->buffer.base;
-          send_back.len = mod_end - mod;
-          request->send_back_vector.push_back(send_back);
-          memset(&send_back, 0, sizeof(send_back));
+          uc->send_back.error = Error::BAD_KEY;
+          uc->send_back.count = request->count;  // fix me !!!!
+          uc->send_back.offset = mod - request->buffer.base;
+          uc->send_back.len = mod_end - mod;
+          request->send_back_vector.push_back(uc->send_back);
+          memset(&uc->send_back, 0, sizeof(uc->send_back));
           mod = mod_end;
           continue;
         }
@@ -2104,19 +2119,19 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
         // Look for containing range, add to stop mods if not found
         if (!table_update->table_info->find_containing_range(row, range,
                                                              start_row, end_row)) {
-          if (send_back.error != Error::RANGESERVER_OUT_OF_RANGE
-              && send_back.count > 0) {
-            request->send_back_vector.push_back(send_back);
-            memset(&send_back, 0, sizeof(send_back));
+          if (uc->send_back.error != Error::RANGESERVER_OUT_OF_RANGE
+              && uc->send_back.count > 0) {
+            request->send_back_vector.push_back(uc->send_back);
+            memset(&uc->send_back, 0, sizeof(uc->send_back));
           }
-          if (send_back.count == 0) {
-            send_back.error = Error::RANGESERVER_OUT_OF_RANGE;
-            send_back.offset = mod - request->buffer.base;
+          if (uc->send_back.count == 0) {
+            uc->send_back.error = Error::RANGESERVER_OUT_OF_RANGE;
+            uc->send_back.offset = mod - request->buffer.base;
           }
           key.next(); // skip key
           key.next(); // skip value;
           mod = key.ptr;
-          send_back.count++;
+          uc->send_back.count++;
           continue;
         }
 
@@ -2126,18 +2141,16 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
           table_update->range_map[range.get()] = rulist;
         }
 
-        starting_range_update_count = rulist->updates.size();
-
         if (table_update->wait_for_metadata_recovery && !rulist->range->is_root()) {
           if (!wait_for_metadata_recovery_finish(expire_time)) {
-	    m_update_mutex_a.unlock();
+	    delete uc;
 	    return;
 	  }
           table_update->wait_for_metadata_recovery = false;
         }
         else if (table_update->wait_for_system_recovery) {
           if (!wait_for_system_recovery_finish(expire_time)) {
-	    m_update_mutex_a.unlock();
+	    delete uc;
 	    return;
 	  }
           table_update->wait_for_system_recovery = false;
@@ -2145,25 +2158,25 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
 
         // See if range has some other error preventing it from receiving updates
         if ((error = rulist->range->get_error()) != Error::OK) {
-          if (send_back.error != error && send_back.count > 0) {
-            request->send_back_vector.push_back(send_back);
-            memset(&send_back, 0, sizeof(send_back));
+          if (uc->send_back.error != error && uc->send_back.count > 0) {
+            request->send_back_vector.push_back(uc->send_back);
+            memset(&uc->send_back, 0, sizeof(uc->send_back));
           }
-          if (send_back.count == 0) {
-            send_back.error = error;
-            send_back.offset = mod - request->buffer.base;
+          if (uc->send_back.count == 0) {
+            uc->send_back.error = error;
+            uc->send_back.offset = mod - request->buffer.base;
           }
           key.next(); // skip key
           key.next(); // skip value;
           mod = key.ptr;
-          send_back.count++;
+          uc->send_back.count++;
           continue;
         }
 
-        if (send_back.count > 0) {
-          send_back.len = (mod - request->buffer.base) - send_back.offset;
-          request->send_back_vector.push_back(send_back);
-          memset(&send_back, 0, sizeof(send_back));
+        if (uc->send_back.count > 0) {
+          uc->send_back.len = (mod - request->buffer.base) - uc->send_back.offset;
+          request->send_back_vector.push_back(uc->send_back);
+          memset(&uc->send_back, 0, sizeof(uc->send_back));
         }
 
         /*
@@ -2172,9 +2185,9 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
          */
         if (!rulist->range_blocked) {
           if (!rulist->range->increment_update_counter()) {
-            send_back.error = error;
-            send_back.offset = mod - request->buffer.base;
-            send_back.count++;
+            uc->send_back.error = error;
+            uc->send_back.offset = mod - request->buffer.base;
+            uc->send_back.count++;
             key.next(); // skip key
             key.next(); // skip value;
             mod = key.ptr;
@@ -2193,10 +2206,13 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
         }
 
         /** Fetch range transfer information **/
-        transfer_pending = rulist->range->get_transfer_info(transfer_info, transfer_log,
-                                                            &latest_range_revision, wait_for_maintenance);
-        if (wait_for_maintenance)
-          table_update->wait_ranges.insert(rulist->range.get());
+	{
+	  bool wait_for_maintenance;
+	  transfer_pending = rulist->range->get_transfer_info(transfer_info, transfer_log,
+							      &latest_range_revision, wait_for_maintenance);
+	  if (wait_for_maintenance)
+	    table_update->wait_ranges.insert(rulist->range.get());
+	}
 
         if (rulist->transfer_log.get() == 0)
           rulist->transfer_log = transfer_log;
@@ -2214,12 +2230,12 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
           tmp_key.decode_length(&tmp);
           if ((*tmp & Key::HAVE_REVISION) == 0) {
             if (latest_range_revision > TIMESTAMP_MIN
-                && auto_revision < latest_range_revision) {
+                && uc->auto_revision < latest_range_revision) {
               tmp_timestamp = Hypertable::get_ts64();
-              if (tmp_timestamp > auto_revision)
-                auto_revision = tmp_timestamp;
-              if (auto_revision < latest_range_revision) {
-                difference = (int32_t)((latest_range_revision - auto_revision)
+              if (tmp_timestamp > uc->auto_revision)
+                uc->auto_revision = tmp_timestamp;
+              if (uc->auto_revision < latest_range_revision) {
+                difference = (int32_t)((latest_range_revision - uc->auto_revision)
                                        / 1000LL);
                 if (difference > m_max_clock_skew && !Global::ignore_clock_skew_errors) {
                   request->error = Error::RANGESERVER_CLOCK_SKEW;
@@ -2227,7 +2243,7 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
                             "(%lld) range=%s", (Lld)difference,
                             (Lld)m_max_clock_skew,
                             rulist->range->get_name().c_str());
-                  send_back.count = 0;
+                  uc->send_back.count = 0;
                   request->send_back_vector.clear();
                   break;
                 }
@@ -2251,13 +2267,13 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
         }
 
         if (rulist->range->is_root()) {
-          if (root_buf.empty()) {
-            root_buf.reserve(table_update->id.encoded_length());
-            table_update->id.encode(&root_buf.ptr);
-            root_buf.set_mark();
-            root_buf_reset_offset = root_buf.fill();
+          if (uc->root_buf.empty()) {
+            uc->root_buf.reserve(table_update->id.encoded_length());
+            table_update->id.encode(&uc->root_buf.ptr);
+            uc->root_buf.set_mark();
+            root_buf_reset_offset = uc->root_buf.fill();
           }
-          cur_bufp = &root_buf;
+          cur_bufp = &uc->root_buf;
         }
         else
           cur_bufp = &table_update->go_buf;
@@ -2299,11 +2315,11 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
             // This will transform keys that need to be assigned a
             // timestamp and/or revision number by re-writing the key
             // with the added timestamp and/or revision tacked on to the end
-            transform_key(key, cur_bufp, ++auto_revision, &m_last_revision);
+            transform_key(key, cur_bufp, ++uc->auto_revision, &m_last_revision);
 
             // Validate revision number
             if (m_last_revision < latest_range_revision) {
-              if (m_last_revision != auto_revision) {
+              if (m_last_revision != uc->auto_revision) {
                 HT_THROWF(Error::RANGESERVER_REVISION_ORDER_ERROR,
                           "Supplied revision (%lld) is less than most recently "
                           "seen revision (%lld) for range %s",
@@ -2353,8 +2369,8 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
             (*iter).second->reset_updates(request);
           table_update->go_buf.ptr = table_update->go_buf.base + go_buf_reset_offset;
           if (root_buf_reset_offset)
-            root_buf.ptr = root_buf.base + root_buf_reset_offset;
-          send_back.count = 0;
+            uc->root_buf.ptr = uc->root_buf.base + root_buf_reset_offset;
+          uc->send_back.count = 0;
           mod = mod_end;
         }
         range_update.bufp = 0;
@@ -2362,42 +2378,61 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
 
       transfer_log = 0;
 
-      if (send_back.count > 0) {
-        send_back.len = (mod - request->buffer.base) - send_back.offset;
-        request->send_back_vector.push_back(send_back);
-        memset(&send_back, 0, sizeof(send_back));
+      if (uc->send_back.count > 0) {
+        uc->send_back.len = (mod - request->buffer.base) - uc->send_back.offset;
+        request->send_back_vector.push_back(uc->send_back);
+        memset(&uc->send_back, 0, sizeof(uc->send_back));
       }
-
     }
 
     HT_DEBUGF("Added %d (%d transferring) updates to '%s'",
 	      table_update->total_added, table_update->transfer_count,
 	      table_update->id.id);
     if (!table_update->id.is_metadata())
-      total_added += table_update->total_added;
+      uc->total_added += table_update->total_added;
   }
 
-  last_revision = m_last_revision;
+  uc->last_revision = m_last_revision;
 
-  m_update_mutex_b.lock();
-  b_locked = true;
+  // Enqueue update
+  {
+    ScopedLock lock(m_update_commit_queue_mutex);
+    m_update_commit_queue.push_back(uc);
+  }
 
-  m_update_mutex_a.unlock();
-  a_locked = false;
+}
+
+
+
+void RangeServer::update_commit_and_add() {
+  ScopedLock method_lock(m_update_commit_mutex);
+  UpdateContext *uc;
+  SerializedKey key;
+  int error = Error::OK;
+
+  // Dequeue next update
+  {
+    ScopedLock lock(m_update_commit_queue_mutex);
+    if (m_update_commit_queue.empty())
+      return;
+    uc = m_update_commit_queue.front();
+    m_update_commit_queue.pop_front();
+  }
 
   /**
    * Commit ROOT mutations
    */
-  if (root_buf.ptr > root_buf.mark) {
-    if ((error = Global::root_log->write(root_buf, last_revision)) != Error::OK) {
+  if (uc->root_buf.ptr > uc->root_buf.mark) {
+    if ((error = Global::root_log->write(uc->root_buf, uc->last_revision)) != Error::OK) {
       HT_FATALF("Problem writing %d bytes to ROOT commit log - %s",
-                (int)root_buf.fill(), Error::get_text(error));
+                (int)uc->root_buf.fill(), Error::get_text(error));
     }
   }
 
   uint32_t committed_transfer_data = 0;
+  bool user_log_needs_syncing = false;
 
-  foreach (TableUpdate *table_update, updates) {
+  foreach (TableUpdate *table_update, uc->updates) {
 
     // Iterate through all of the ranges, committing any transferring updates
     for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin(); iter != table_update->range_map.end(); ++iter) {
@@ -2442,10 +2477,10 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
       else {
         log = Global::user_log;
         if (sync)
-          total_syncs++;
+          uc->total_syncs++;
       }
 
-      if ((error = log->write(table_update->go_buf, last_revision, sync)) != Error::OK) {
+      if ((error = log->write(table_update->go_buf, uc->last_revision, sync)) != Error::OK) {
         table_update->error_msg = format("Problem writing %d bytes to commit log (%s) - %s",
                                          (int)table_update->go_buf.fill(),
                                          log->get_log_dir().c_str(),
@@ -2472,10 +2507,10 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
         uint8_t *end = ptr + update.len;
 
         if (!table_update->id.is_metadata())
-          total_bytes_added += update.len;
+          uc->total_bytes_added += update.len;
 
         rangep->add_bytes_written( update.len );
-        last_row = "";
+        const char *last_row = "";
         uint64_t count = 0;
         while (ptr < end) {
           key.ptr = ptr;
@@ -2502,7 +2537,7 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
   // Now sync the USER commit log if needed
   if (user_log_needs_syncing) {
     size_t retry_count = 0;
-    total_syncs++;
+    uc->total_syncs++;
     while ((error = Global::user_log->sync()) != Error::OK) {
       HT_ERRORF("Problem sync'ing user log fragment (%s) - %s",
                 Global::user_log->get_current_fragment_file().c_str(),
@@ -2513,28 +2548,43 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
     }
   }
 
-  if (Global::verbose && misses)
-    HT_INFOF("Sent back %d updates because out-of-range", misses);
-
-
   // decrement usage counters for all referenced ranges
-  foreach (TableUpdate *table_update, updates) {
+  foreach (TableUpdate *table_update, uc->updates) {
     for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin(); iter != table_update->range_map.end(); ++iter) {
       if ((*iter).second->range_blocked)
         (*iter).first->decrement_update_counter();
     }
   }
 
-  if (b_locked)
-    m_update_mutex_b.unlock();
-  else if (a_locked)
-    m_update_mutex_a.unlock();
+  // Enqueue update
+  {
+    ScopedLock lock(m_update_response_queue_mutex);
+    m_update_response_queue.push_back(uc);
+  }
+}
+
+
+void RangeServer::update_send_response() {
+  ScopedLock method_lock(m_update_response_mutex);
+  UpdateContext *uc;
+  SerializedKey key;
+  int error = Error::OK;
+
+  // Dequeue next update
+  {
+    ScopedLock lock(m_update_response_queue_mutex);
+    //HT_ASSERT(!m_update_response_queue.empty());
+    if (m_update_response_queue.empty())
+      return;
+    uc = m_update_response_queue.front();
+    m_update_response_queue.pop_front();
+  }
 
   /**
    * wait for these ranges to complete maintenance
    */
 
-  foreach (TableUpdate *table_update, updates) {
+  foreach (TableUpdate *table_update, uc->updates) {
 
     /**
      * If any of the newly updated ranges needs maintenance,
@@ -2599,17 +2649,12 @@ RangeServer::batch_update(std::vector<TableUpdate *> &updates, boost::xtime expi
 
   }
 
-  // Delete RangeUpdateList objects
-  foreach (TableUpdate *table_update, updates) {
-    for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin();
-         iter != table_update->range_map.end(); ++iter)
-      delete (*iter).second;
-  }
-
   {
     Locker<RSStats> lock(*m_server_stats);
-    m_server_stats->add_update_data(total_updates, total_added, total_bytes_added, total_syncs);
+    m_server_stats->add_update_data(uc->total_updates, uc->total_added, uc->total_bytes_added, uc->total_syncs);
   }
+
+  delete uc;
 
 }
 
@@ -3401,8 +3446,9 @@ void RangeServer::close(ResponseCallback *cb) {
   Global::maintenance_queue->stop();
 
   // block updates
-  m_update_mutex_a.lock();
-  m_update_mutex_b.lock();
+  m_update_qualify_mutex.lock();
+  m_update_commit_mutex.lock();
+  m_update_response_mutex.lock();
 
   // get the tables
   m_live_map->get_all(table_vec);
