@@ -192,6 +192,7 @@ namespace Hypertable {
     std::list<UpdateContext *> m_update_qualify_queue;
     Mutex                      m_update_commit_queue_mutex;
     boost::condition           m_update_commit_queue_cond;
+    int32_t                    m_update_commit_queue_count;
     Mutex                      m_update_commit_mutex;
     std::list<UpdateContext *> m_update_commit_queue;
     Mutex                      m_update_response_queue_mutex;
@@ -229,6 +230,7 @@ namespace Hypertable {
     int32_t                m_max_clock_skew;
     uint64_t               m_bytes_loaded;
     uint64_t               m_log_roll_limit;
+    uint64_t               m_update_coalesce_limit;
     int                    m_replay_group;
     TableIdCachePtr        m_dropped_table_id_cache;
 

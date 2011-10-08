@@ -87,14 +87,15 @@ using namespace Hypertable::Property;
 
 RangeServer::RangeServer(PropertiesPtr &props, ConnectionManagerPtr &conn_mgr,
     ApplicationQueuePtr &app_queue, Hyperspace::SessionPtr &hyperspace)
-  : m_root_replay_finished(false), m_metadata_replay_finished(false),
-    m_system_replay_finished(false), m_replay_finished(false), m_props(props),
-    m_verbose(false), m_shutdown(false), m_comm(conn_mgr->get_comm()), m_conn_manager(conn_mgr),
+  : m_update_commit_queue_count(0), m_root_replay_finished(false),
+    m_metadata_replay_finished(false), m_system_replay_finished(false),
+    m_replay_finished(false), m_props(props), m_verbose(false),
+    m_shutdown(false), m_comm(conn_mgr->get_comm()), m_conn_manager(conn_mgr),
     m_app_queue(app_queue), m_hyperspace(hyperspace), m_timer_handler(0),
     m_group_commit_timer_handler(0), m_query_cache(0),
-    m_last_revision(TIMESTAMP_MIN), m_last_metrics_update(0), m_loadavg_accum(0.0),
-    m_page_in_accum(0), m_page_out_accum(0), m_metric_samples(0),
-    m_pending_metrics_updates(0)
+    m_last_revision(TIMESTAMP_MIN), m_last_metrics_update(0),
+    m_loadavg_accum(0.0), m_page_in_accum(0), m_page_out_accum(0),
+    m_metric_samples(0), m_pending_metrics_updates(0)
 {
 
   uint16_t port;
@@ -114,6 +115,7 @@ RangeServer::RangeServer(PropertiesPtr &props, ConnectionManagerPtr &conn_mgr,
     Global::cellstore_target_size_min + cfg.get_i64("CellStore.TargetSize.Window");
   m_scanner_buffer_size = cfg.get_i64("Scanner.BufferSize");
   port = cfg.get_i16("Port");
+  m_update_coalesce_limit = cfg.get_i64("UpdateCoalesceLimit");
 
   /** Compute maintenance threads **/
   uint32_t maintenance_threads;
@@ -2417,6 +2419,7 @@ void RangeServer::update_qualify_and_transform() {
       ScopedLock lock(m_update_commit_queue_mutex);
       m_update_commit_queue.push_back(uc);
       m_update_commit_queue_cond.notify_all();
+      m_update_commit_queue_count++;
     }
   }
 }
@@ -2427,6 +2430,8 @@ void RangeServer::update_commit() {
   ScopedLock method_lock(m_update_commit_mutex);
   UpdateContext *uc;
   SerializedKey key;
+  std::list<UpdateContext *> coalesce_queue;
+  uint64_t coalesce_amount = 0;
   int error = Error::OK;
   uint32_t committed_transfer_data;
   bool user_log_needs_syncing;
@@ -2442,6 +2447,7 @@ void RangeServer::update_commit() {
 	return;
       uc = m_update_commit_queue.front();
       m_update_commit_queue.pop_front();
+      m_update_commit_queue_count--;
     }
 
     committed_transfer_data = 0;
@@ -2458,6 +2464,8 @@ void RangeServer::update_commit() {
     }
 
     foreach (TableUpdate *table_update, uc->updates) {
+
+      coalesce_amount += table_update->total_buffer_size;
 
       // Iterate through all of the ranges, committing any transferring updates
       for (hash_map<Range *, RangeUpdateList *>::iterator iter = table_update->range_map.begin(); iter != table_update->range_map.end(); ++iter) {
@@ -2512,8 +2520,19 @@ void RangeServer::update_commit() {
 
     }
 
-    // Now sync the USER commit log if needed
+    bool do_sync = false;
     if (user_log_needs_syncing) {
+      if (m_update_commit_queue_count > 0 && coalesce_amount < m_update_coalesce_limit) {
+	coalesce_queue.push_back(uc);
+	continue;
+      }
+      do_sync = true;
+    }
+    else if (!coalesce_queue.empty())
+      do_sync = true;
+
+    // Now sync the USER commit log if needed
+    if (do_sync) {
       size_t retry_count = 0;
       uc->total_syncs++;
       while ((error = Global::user_log->sync()) != Error::OK) {
@@ -2529,7 +2548,13 @@ void RangeServer::update_commit() {
     // Enqueue update
     {
       ScopedLock lock(m_update_response_queue_mutex);
-      m_update_response_queue.push_back(uc);
+      coalesce_queue.push_back(uc);
+      while (!coalesce_queue.empty()) {
+	uc = coalesce_queue.front();
+	coalesce_queue.pop_front();
+	m_update_response_queue.push_back(uc);
+      }
+      coalesce_amount = 0;
       m_update_response_queue_cond.notify_all();
     }
   }
