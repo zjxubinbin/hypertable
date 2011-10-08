@@ -65,6 +65,7 @@ namespace Hypertable {
 
   class ConnectionHandler;
   class TableUpdate;
+  class UpdateThread;
 
   class RangeServer : public ReferenceCount {
   public:
@@ -148,6 +149,14 @@ namespace Hypertable {
 
     void shutdown();
 
+  protected:
+
+    friend class UpdateThread;
+
+    void update_qualify_and_transform();
+    void update_commit();
+    void update_add_and_respond();
+
   private:
 
     void initialize(PropertiesPtr &);
@@ -156,19 +165,17 @@ namespace Hypertable {
     void verify_schema(TableInfoPtr &, uint32_t generation);
     void transform_key(ByteString &bskey, DynamicBuffer *dest_bufp,
                        int64_t revision, int64_t *revisionp);
-    void update_qualify_and_transform(boost::xtime expire_time);
-    void update_commit();
-    void update_add_and_respond();
 
     class UpdateContext {
     public:
-      UpdateContext(std::vector<TableUpdate *> &tu) : updates(tu),
+      UpdateContext(std::vector<TableUpdate *> &tu, boost::xtime xt) : updates(tu), expire_time(xt),
           total_updates(0), total_added(0), total_syncs(0), total_bytes_added(0) { }
       ~UpdateContext() {
 	foreach(TableUpdate *u, updates)
 	  delete u;
       }
       std::vector<TableUpdate *> updates;
+      boost::xtime expire_time;
       int64_t auto_revision;
       SendBackRec send_back;
       DynamicBuffer root_buf;
@@ -180,14 +187,18 @@ namespace Hypertable {
     };
 
     Mutex                      m_update_qualify_queue_mutex;
+    boost::condition           m_update_qualify_queue_cond;
     Mutex                      m_update_qualify_mutex;
     std::list<UpdateContext *> m_update_qualify_queue;
     Mutex                      m_update_commit_queue_mutex;
+    boost::condition           m_update_commit_queue_cond;
     Mutex                      m_update_commit_mutex;
     std::list<UpdateContext *> m_update_commit_queue;
     Mutex                      m_update_response_queue_mutex;
+    boost::condition           m_update_response_queue_cond;
     Mutex                      m_update_response_mutex;
     std::list<UpdateContext *> m_update_response_queue;
+    std::vector<Thread *>      m_update_threads;
 
     Mutex                  m_mutex;
     Mutex                  m_drop_table_mutex;
@@ -202,6 +213,7 @@ namespace Hypertable {
     Mutex                  m_stats_mutex;
     PropertiesPtr          m_props;
     bool                   m_verbose;
+    bool                   m_shutdown;
     Comm                  *m_comm;
     TableInfoMapPtr        m_live_map;
     TableInfoMapPtr        m_replay_map;
