@@ -372,7 +372,7 @@ void DefaultPolicy::init_options() {
     ("Hypertable.RangeServer.CommitLog.Compressor",
         str()->default_value("quicklz"),
         "Commit log compressor to use (zlib, lzo, quicklz, snappy, bmz, none)")
-    ("Hypertable.RangeServer.UpdateCoalesceLimit", i64()->default_value(20*M),
+    ("Hypertable.RangeServer.UpdateCoalesceLimit", i64()->default_value(5*M),
         "Amount of update data to coalesce into single commit log sync")
     ("Hypertable.Metadata.Replication", i32()->default_value(-1),
         "Replication factor for commit log files")
