@@ -20,19 +20,18 @@
  */
 
 #include "Common/Compat.h"
-#include <cassert>
-
 #include "Common/Logger.h"
 
 #include "Hypertable/Lib/Key.h"
+#include "Hypertable/Lib/Schema.h"
 
 #include "MergeScannerAccessGroup.h"
 
 using namespace Hypertable;
 
 
-MergeScannerAccessGroup::MergeScannerAccessGroup(ScanContextPtr &scan_ctx, 
-    bool return_deletes)
+MergeScannerAccessGroup::MergeScannerAccessGroup(String &table_name,
+        ScanContextPtr &scan_ctx, bool return_deletes, bool is_compaction)
   : MergeScanner(scan_ctx), m_return_deletes(return_deletes),
     m_revs_count(0), m_revs_limit(0), m_prev_key(0), m_prev_cf(-1), 
     m_no_forward(false), m_count_present(false), 
@@ -43,6 +42,32 @@ MergeScannerAccessGroup::MergeScannerAccessGroup(ScanContextPtr &scan_ctx,
   m_start_timestamp = scan_ctx->time_interval.first;
   m_end_timestamp = scan_ctx->time_interval.second;
   m_revision = scan_ctx->revision;
+
+  bool has_index = false;
+  bool has_qualifier_index = false;
+
+  if (is_compaction) {
+    // check if there are any indices in this schema
+    foreach (Schema::ColumnFamily *cf, scan_ctx->schema->get_column_families()){
+      if (!cf || cf->deleted)
+        continue;
+      if (cf->has_index) {
+        HT_INFO("Compaction scan has cell value index");
+        has_index = true;
+      }
+      if (cf->has_qualifier_index) {
+        HT_INFO("Compaction scan has column qualifier index");
+        has_qualifier_index = true;
+      }
+
+      if (has_index && has_qualifier_index)
+        break;
+    }
+  }
+
+  if (has_index || has_qualifier_index)
+    m_index_updater = IndexUpdaterFactory::create(table_name,
+                                has_index, has_qualifier_index);
 }
 
 bool 
@@ -89,6 +114,8 @@ MergeScannerAccessGroup::do_initialize()
 
     if (sstate.key.timestamp < cell_cutoff
         || (sstate.key.timestamp < m_start_timestamp)) {
+      if (m_index_updater && sstate.key.flag == FLAG_INSERT)
+        purge_from_index(sstate.key, sstate.value);
       m_queue.pop();
       sstate.scanner->forward();
       if (sstate.scanner->get(sstate.key, sstate.value))
@@ -132,6 +159,8 @@ MergeScannerAccessGroup::do_initialize()
       if (sstate.key.revision > m_revision
           || (sstate.key.timestamp >= m_end_timestamp 
             && (!m_return_deletes || sstate.key.flag == FLAG_INSERT))) {
+        if (m_index_updater && sstate.key.flag == FLAG_INSERT)
+          purge_from_index(sstate.key, sstate.value);
         m_queue.pop();
         sstate.scanner->forward();
         if (sstate.scanner->get(sstate.key, sstate.value))
@@ -161,6 +190,8 @@ MergeScannerAccessGroup::do_initialize()
       }
       m_revs_count++;
       if (m_revs_limit && m_revs_count > m_revs_limit && !counter) {
+        if (m_index_updater && sstate.key.flag == FLAG_INSERT)
+          purge_from_index(sstate.key, sstate.value);
         m_queue.pop();
         sstate.scanner->forward();
         if (sstate.scanner->get(sstate.key, sstate.value))
@@ -175,6 +206,39 @@ MergeScannerAccessGroup::do_initialize()
             && (cmp = strcmp(*m_scan_context_ptr->rowset.begin(), sstate.key.row)) < 0)
           m_scan_context_ptr->rowset.erase(m_scan_context_ptr->rowset.begin());
         if (cmp > 0) {
+          m_queue.pop();
+          sstate.scanner->forward();
+          if (sstate.scanner->get(sstate.key, sstate.value))
+            m_queue.push(sstate);
+          continue;
+        }
+      }
+      // value match (exact match or prefix match)
+      if (m_scan_context_ptr->spec 
+            && m_scan_context_ptr->spec->column_predicates.size()) {
+        bool fail = false;
+        foreach (const ColumnPredicate &cp, 
+                m_scan_context_ptr->spec->column_predicates) {
+          const uint8_t *dptr;
+          size_t len = sstate.value.decode_length(&dptr);
+          switch (cp.operation) {
+            case ColumnPredicate::EXACT_MATCH:
+              if (cp.value_len != len || 
+                    memcmp(cp.value, sstate.value.str(), cp.value_len))
+                fail = true;
+              break;
+            case ColumnPredicate::PREFIX_MATCH:
+              if (cp.value_len > len || 
+                    memcmp(cp.value, sstate.value.str(), cp.value_len))
+                fail = true;
+              break;
+            default:
+              continue;
+          }
+          if (fail)
+            break;
+        }
+        if (fail) {
           m_queue.pop();
           sstate.scanner->forward();
           if (sstate.scanner->get(sstate.key, sstate.value))
@@ -296,15 +360,21 @@ MergeScannerAccessGroup::do_forward()
         sstate.key.column_family_code].cutoff_time;
 
       // apply the various filters...
-      if(sstate.key.timestamp < cell_cutoff) {
+      if (sstate.key.timestamp < cell_cutoff) {
+        if (m_index_updater && sstate.key.flag == FLAG_INSERT)
+          purge_from_index(sstate.key, sstate.value);
         continue;
       }
       else if (sstate.key.timestamp < m_start_timestamp) {
+        if (m_index_updater && sstate.key.flag == FLAG_INSERT)
+          purge_from_index(sstate.key, sstate.value);
         continue;
       }
       else if (sstate.key.revision > m_revision
           || (sstate.key.timestamp >= m_end_timestamp 
             && (!m_return_deletes || sstate.key.flag == FLAG_INSERT))) {
+        if (m_index_updater && sstate.key.flag == FLAG_INSERT)
+          purge_from_index(sstate.key, sstate.value);
         continue;
       }
       else if (sstate.key.flag == FLAG_DELETE_ROW) {
@@ -338,8 +408,9 @@ MergeScannerAccessGroup::do_forward()
           break;
       }
       else if (sstate.key.flag == FLAG_DELETE_CELL_VERSION) {
-        if (matches_deleted_cell_version(sstate.key))
+        if (matches_deleted_cell_version(sstate.key)) {
           m_deleted_cell_version_set.insert(sstate.key.timestamp);
+        }
         else
           update_deleted_cell_version(sstate.key);
         if (m_return_deletes)
@@ -356,33 +427,45 @@ MergeScannerAccessGroup::do_forward()
               m_deleted_cell_version_set.clear();
             }
             else if (m_deleted_cell_version_set.find(sstate.key.timestamp) !=
-                     m_deleted_cell_version_set.end())
+                     m_deleted_cell_version_set.end()) {
               // apply previously seen delete cell version to this cell
+              if (m_index_updater)
+                purge_from_index(sstate.key, sstate.value);
               continue;
+            }
           }
           if (m_deleted_cell.fill() > 0) {
             if (!matches_deleted_cell(sstate.key))
               // we wont see the previously seen deleted cell again
               m_deleted_cell.clear();
-            else if (sstate.key.timestamp <= m_deleted_cell_timestamp)
+            else if (sstate.key.timestamp <= m_deleted_cell_timestamp) {
               // apply previously seen delete cell to this cell
+              if (m_index_updater)
+                purge_from_index(sstate.key, sstate.value);
               continue;
+            }
           }
           if (m_deleted_column_family.fill() > 0) {
             if (!matches_deleted_column_family(sstate.key))
               // we wont see the previously seen deleted column family again
               m_deleted_column_family.clear();
-            else if (sstate.key.timestamp <= m_deleted_column_family_timestamp)
+            else if (sstate.key.timestamp <= m_deleted_column_family_timestamp){
               // apply previously seen delete column family to this cell
+              if (m_index_updater)
+                purge_from_index(sstate.key, sstate.value);
               continue;
+            }
           }
           if (m_deleted_row.fill() > 0) {
             if (!matches_deleted_row(sstate.key))
               // we wont see the previously seen deleted row family again
               m_deleted_row.clear();
-            else if (sstate.key.timestamp <= m_deleted_row_timestamp)
+            else if (sstate.key.timestamp <= m_deleted_row_timestamp) {
               // apply previously seen delete row family to this cell
+              if (m_index_updater)
+                purge_from_index(sstate.key, sstate.value);
               continue;
+            }
           }
           if (m_deleted_cell_version.fill() == 0 
               && m_deleted_cell.fill() == 0 
@@ -424,6 +507,34 @@ MergeScannerAccessGroup::do_forward()
                                 sstate.key.row)) < 0)
             m_scan_context_ptr->rowset.erase(m_scan_context_ptr->rowset.begin());
           if (cmp > 0)
+            continue;
+        }
+        // value match (exact match or prefix match)
+        if (m_scan_context_ptr->spec 
+              && m_scan_context_ptr->spec->column_predicates.size()) {
+          bool fail = false;
+          foreach (const ColumnPredicate &cp, 
+                  m_scan_context_ptr->spec->column_predicates) {
+            const uint8_t *dptr;
+            size_t len = sstate.value.decode_length(&dptr);
+            switch (cp.operation) {
+              case ColumnPredicate::EXACT_MATCH:
+                if (cp.value_len != len || 
+                      memcmp(cp.value, sstate.value.str(), cp.value_len))
+                  fail = true;
+                break;
+              case ColumnPredicate::PREFIX_MATCH:
+                if (cp.value_len > len || 
+                      memcmp(cp.value, sstate.value.str(), cp.value_len))
+                  fail = true;
+                break;
+              default:
+                continue;
+            }
+            if (fail)
+              break;
+          }
+          if (fail)
             continue;
         }
         // row regexp

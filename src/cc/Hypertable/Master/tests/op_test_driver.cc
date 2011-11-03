@@ -520,41 +520,48 @@ void master_initialize_test(ContextPtr &context) {
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::STARTED) );
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   run_test(context, log_dir, entities, "initialize-INITIAL:throw:0",
            expected_operations, expected_servers);
 
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::COMPLETE) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::STARTED) );
   run_test(context, log_dir, entities, "initialize-STARTED:throw:0",
            expected_operations, expected_servers);
 
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::COMPLETE) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::LOAD_ROOT_METADATA_RANGE) );
   run_test(context, log_dir, entities, "initialize-ASSIGN_METADATA_RANGES:throw:0",
            expected_operations, expected_servers);
 
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::COMPLETE) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::LOAD_ROOT_METADATA_RANGE) );
   run_test(context, log_dir, entities, "initialize-LOAD_ROOT_METADATA_RANGE:throw:0",
            expected_operations, expected_servers);
 
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::COMPLETE) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::LOAD_SECOND_METADATA_RANGE) );
   run_test(context, log_dir, entities, "initialize-LOAD_SECOND_METADATA_RANGE:throw:0",
            expected_operations, expected_servers);
 
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::COMPLETE) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::WRITE_METADATA) );
   run_test(context, log_dir, entities, "initialize-WRITE_METADATA:throw:0",
            expected_operations, expected_servers);
 
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::COMPLETE) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateTable", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::FINALIZE) );
   run_test(context, log_dir, entities, "initialize-CREATE_RS_METRICS:throw:0",
@@ -562,6 +569,7 @@ void master_initialize_test(ContextPtr &context) {
 
   expected_operations.clear();
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::COMPLETE) );
+  expected_operations.insert( std::pair<String, int32_t>("OperationCreateNamespace", OperationState::INITIAL) );
   expected_operations.insert( std::pair<String, int32_t>("OperationCreateTable", OperationState::COMPLETE) );
   expected_operations.insert( std::pair<String, int32_t>("OperationInitialize", OperationState::COMPLETE) );
   run_test(context, log_dir, entities, "", expected_operations, expected_servers);

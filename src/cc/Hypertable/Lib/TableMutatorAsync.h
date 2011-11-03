@@ -41,6 +41,9 @@
 
 namespace Hypertable {
 
+  class TableMutator;
+  typedef intrusive_ptr<TableMutator> TableMutatorPtr;
+
   /**
    * Provides the ability to mutate a table in the form of adding and deleting
    * rows and cells.  Objects of this class are used to collect mutations and
@@ -215,7 +218,10 @@ namespace Hypertable {
     }
     void update_unsynced_rangeservers(const CommAddressSet &unsynced);
     void handle_send_exceptions();
+    void update_index(Key &key, const void *value, uint32_t value_len);
+
     typedef std::map<uint32_t, TableMutatorAsyncScatterBufferPtr> ScatterBufferAsyncMap;
+
     PropertiesPtr        m_props;
     Comm                *m_comm;
     ApplicationQueuePtr  m_app_queue;
@@ -251,6 +257,8 @@ namespace Hypertable {
     bool       m_cancelled;
     bool       m_mutated;
     FailedMutations m_failed_mutations;
+    TableMutatorPtr m_index_mutator;
+    TableMutatorPtr m_qualifier_index_mutator;
   };
 
   typedef intrusive_ptr<TableMutatorAsync> TableMutatorAsyncPtr;

@@ -755,14 +755,14 @@ public class Result implements org.apache.thrift.TBase<Result, Result._Fields>, 
         case 7: // CELLS
           if (field.type == org.apache.thrift.protocol.TType.LIST) {
             {
-              org.apache.thrift.protocol.TList _list12 = iprot.readListBegin();
-              this.cells = new ArrayList<Cell>(_list12.size);
-              for (int _i13 = 0; _i13 < _list12.size; ++_i13)
+              org.apache.thrift.protocol.TList _list16 = iprot.readListBegin();
+              this.cells = new ArrayList<Cell>(_list16.size);
+              for (int _i17 = 0; _i17 < _list16.size; ++_i17)
               {
-                Cell _elem14; // required
-                _elem14 = new Cell();
-                _elem14.read(iprot);
-                this.cells.add(_elem14);
+                Cell _elem18; // required
+                _elem18 = new Cell();
+                _elem18.read(iprot);
+                this.cells.add(_elem18);
               }
               iprot.readListEnd();
             }
@@ -826,9 +826,9 @@ public class Result implements org.apache.thrift.TBase<Result, Result._Fields>, 
         oprot.writeFieldBegin(CELLS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, this.cells.size()));
-          for (Cell _iter15 : this.cells)
+          for (Cell _iter19 : this.cells)
           {
-            _iter15.write(oprot);
+            _iter19.write(oprot);
           }
           oprot.writeListEnd();
         }

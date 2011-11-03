@@ -69,11 +69,15 @@ void OperationCreateTable::initialize_dependencies() {
 
 void OperationCreateTable::execute() {
   bool is_namespace;
-  RangeSpec range;
+  RangeSpec range, index_range, qualifier_index_range;
   int32_t state = get_state();
+  Schema *s;
+  bool has_index = false;
+  bool has_qualifier_index = false;
 
   HT_INFOF("Entering CreateTable-%lld(%s, location=%s) state=%s",
-           (Lld)header.id, m_name.c_str(), m_location.c_str(), OperationState::get_text(state));
+           (Lld)header.id, m_name.c_str(), m_location.c_str(), 
+           OperationState::get_text(state));
 
   switch (state) {
 
@@ -87,7 +91,8 @@ void OperationCreateTable::execute() {
 
   case OperationState::ASSIGN_ID:
     try {
-      Utility::create_table_in_hyperspace(m_context, m_name, m_schema, &m_table);
+      Utility::create_table_in_hyperspace(m_context, m_name, m_schema, 
+              &m_table);
     }
     catch (Exception &e) {
       if (e.code() == Error::INDUCED_FAILURE)
@@ -97,13 +102,59 @@ void OperationCreateTable::execute() {
       complete_error(e);
       return;
     }
+
+    // if this table has an index then also create the index table
+    s = Schema::new_instance(m_schema.c_str(), m_schema.size());
+    foreach (Schema::ColumnFamily *cf, s->get_column_families()) {
+      if (cf && !cf->deleted) {
+         if (cf->has_index)
+           has_index = true;
+         if (cf->has_qualifier_index)
+           has_qualifier_index = true;
+      }
+    }
+    delete s;
+
+    try {
+      if (has_index) {
+        HT_INFOF("  creating index for table %s", m_name.c_str()); 
+        Utility::create_index_in_hyperspace(m_context, m_name, m_schema, 
+                        false, &m_index_table);
+      }
+      if (has_qualifier_index) {
+        HT_INFOF("  creating qualifier index for table %s", m_name.c_str()); 
+        Utility::create_index_in_hyperspace(m_context, m_name, m_schema, 
+                        true, &m_qualifier_index_table);
+      }
+    }
+    catch (Exception &e) {
+      if (e.code() == Error::INDUCED_FAILURE)
+        throw;
+      if (e.code() != Error::NAMESPACE_DOES_NOT_EXIST)
+        HT_ERROR_OUT << e << HT_END;
+      complete_error(e);
+      return;
+    }
+
     HT_MAYBE_FAIL("create-table-ASSIGN_ID");
     set_state(OperationState::WRITE_METADATA);
 
   case OperationState::WRITE_METADATA:
     Utility::create_table_write_metadata(m_context, &m_table);
     HT_MAYBE_FAIL("create-table-WRITE_METADATA-a");
-    m_range_name = format("%s[..%s]", m_table.id, Key::END_ROW_MARKER);
+
+    // also write meta data for the index table
+    if (m_index_table.id)
+      Utility::create_table_write_metadata(m_context, &m_index_table);
+    if (m_qualifier_index_table.id)
+      Utility::create_table_write_metadata(m_context, &m_qualifier_index_table);
+
+    m_range_name = format("%s[..%s]", 
+            m_table.id, Key::END_ROW_MARKER);
+    m_index_range_name = format("%s[..%s]", 
+            m_index_table.id, Key::END_ROW_MARKER);
+    m_qualifier_index_range_name = format("%s[..%s]", 
+            m_qualifier_index_table.id, Key::END_ROW_MARKER);
     {
       ScopedLock lock(m_mutex);
       m_dependencies.clear();
@@ -111,6 +162,10 @@ void OperationCreateTable::execute() {
       m_dependencies.insert(Dependency::METADATA);
       m_dependencies.insert(Dependency::SYSTEM);
       m_dependencies.insert(m_range_name);
+      if (has_index)
+        m_dependencies.insert(m_index_range_name);
+      if (has_qualifier_index)
+        m_dependencies.insert(m_qualifier_index_range_name);
       m_state = OperationState::ASSIGN_LOCATION;
     }
     m_context->mml_writer->record_state(this);
@@ -127,6 +182,10 @@ void OperationCreateTable::execute() {
       m_dependencies.insert(Dependency::SYSTEM);
       m_dependencies.insert(m_location);
       m_dependencies.insert(m_range_name);
+      if (has_index)
+        m_dependencies.insert(m_index_range_name);
+      if (has_qualifier_index)
+        m_dependencies.insert(m_qualifier_index_range_name);
       m_state = OperationState::LOAD_RANGE;
     }
     m_context->mml_writer->record_state(this);
@@ -137,15 +196,52 @@ void OperationCreateTable::execute() {
     try {
       range.start_row = 0;
       range.end_row = Key::END_ROW_MARKER;
-      Utility::create_table_load_range(m_context, m_location, &m_table, range, false);
+      Utility::create_table_load_range(m_context, m_location, &m_table, 
+              range, false);
       HT_MAYBE_FAIL("create-table-LOAD_RANGE-a");
     }
     catch (Exception &e) {
       if (!m_context->reassigned(&m_table, range, m_location))
         HT_THROW2(e.code(), e, format("Loading %s range %s on server %s",
-                                      m_name.c_str(), m_range_name.c_str(), m_location.c_str()));
+                                      m_name.c_str(), m_range_name.c_str(), 
+                                      m_location.c_str()));
       // if reassigned, it was properly loaded and then moved, so continue on
     }
+
+    // now load ranges of the index tables
+    if (m_index_table.id) {
+      try {
+        index_range.start_row = 0;
+        index_range.end_row = Key::END_ROW_MARKER;
+        Utility::create_table_load_range(m_context, m_location, 
+                        &m_index_table, index_range, false);
+      }
+      catch (Exception &e) {
+        if (!m_context->reassigned(&m_index_table, index_range, m_location))
+          HT_THROW2(e.code(), e, format("Loading %s index range %s on "
+                    "server %s", m_name.c_str(), m_index_range_name.c_str(), 
+                    m_location.c_str()));
+        // if reassigned, it was properly loaded and then moved, so continue on
+      }
+    }
+
+    if (m_qualifier_index_table.id) {
+      try {
+        qualifier_index_range.start_row = 0;
+        qualifier_index_range.end_row = Key::END_ROW_MARKER;
+        Utility::create_table_load_range(m_context, m_location, 
+                        &m_qualifier_index_table, qualifier_index_range, false);
+      }
+      catch (Exception &e) {
+        if (!m_context->reassigned(&m_qualifier_index_table, 
+                        qualifier_index_range, m_location))
+          HT_THROW2(e.code(), e, format("Loading %s qualifier index range %s "
+                    "on server %s", m_name.c_str(), 
+                    m_qualifier_index_range_name.c_str(), m_location.c_str()));
+        // if reassigned, it was properly loaded and then moved, so continue on
+      }
+    }
+
     {
       ScopedLock lock(m_mutex);
       m_dependencies.clear();
@@ -158,6 +254,32 @@ void OperationCreateTable::execute() {
     {
       String tablefile = m_context->toplevel_dir + "/tables/" + m_table.id;
       m_context->hyperspace->attr_set(tablefile, "x", "", 0);
+
+      uint64_t handle1 = 0, handle2 = 0, handle3 = 0;
+      HT_ON_SCOPE_EXIT(&Hyperspace::close_handle_ptr, m_context->hyperspace, 
+              &handle1);
+      handle1 = m_context->hyperspace->open(tablefile, 
+              OPEN_FLAG_READ|OPEN_FLAG_WRITE);
+      m_context->hyperspace->attr_set(handle1, "x", "", 0);
+
+      if (m_index_table.id) {
+        HT_ON_SCOPE_EXIT(&Hyperspace::close_handle_ptr, m_context->hyperspace, 
+                &handle2);
+        tablefile = m_context->toplevel_dir + "/tables/" + m_index_table.id;
+        handle2 = m_context->hyperspace->open(tablefile, 
+                OPEN_FLAG_READ|OPEN_FLAG_WRITE);
+        m_context->hyperspace->attr_set(handle2, "x", "", 0);
+      }
+
+      if (m_qualifier_index_table.id) {
+        HT_ON_SCOPE_EXIT(&Hyperspace::close_handle_ptr, m_context->hyperspace, 
+                &handle3);
+        tablefile = m_context->toplevel_dir + "/tables/" + 
+                        m_qualifier_index_table.id;
+        handle3 = m_context->hyperspace->open(tablefile, 
+                OPEN_FLAG_READ|OPEN_FLAG_WRITE);
+        m_context->hyperspace->attr_set(handle3, "x", "", 0);
+      }
     }
     complete_ok();
     break;
@@ -167,8 +289,8 @@ void OperationCreateTable::execute() {
   }
 
   HT_INFOF("Leaving CreateTable-%lld(%s, id=%s, generation=%u)",
-           (Lld)header.id, m_name.c_str(), m_table.id, (unsigned)m_table.generation);
-
+           (Lld)header.id, m_name.c_str(), 
+           m_table.id, (unsigned)m_table.generation);
 }
 
 

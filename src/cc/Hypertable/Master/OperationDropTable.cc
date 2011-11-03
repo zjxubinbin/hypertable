@@ -67,6 +67,18 @@ void OperationDropTable::initialize_dependencies() {
 
 void OperationDropTable::execute() {
   String filename;
+  String index_id;
+  String qualifier_index_id;
+  String index_name = Filesystem::dirname(m_name);
+  if (index_name == "/")
+    index_name += String("^") + Filesystem::basename(m_name);
+  else
+    index_name += String("/^") + Filesystem::basename(m_name);
+  String qualifier_index_name = Filesystem::dirname(m_name);
+  if (qualifier_index_name == "/")
+    qualifier_index_name += String("^^") + Filesystem::basename(m_name);
+  else
+    qualifier_index_name += String("/^^") + Filesystem::basename(m_name);
   bool is_namespace;
   StringSet servers;
   DispatchHandlerOperationPtr op_handler;
@@ -117,7 +129,7 @@ void OperationDropTable::execute() {
     m_context->mml_writer->record_state(this);
     return;
 
-  case OperationState::ISSUE_REQUESTS:
+  case OperationState::ISSUE_REQUESTS: {
     table.id = m_id.c_str();
     table.generation = 0;
     {
@@ -150,6 +162,43 @@ void OperationDropTable::execute() {
       return;
     }
 
+    // first try to delete the index table if it exists
+    if (m_context->namemap->name_to_id(index_name, index_id)) {
+      HT_INFOF("  Dropping index table %s (id %s)", 
+           index_name.c_str(), index_id.c_str());
+      try {
+        m_context->namemap->drop_mapping(index_name);
+        filename = m_context->toplevel_dir + "/tables/" + index_id;
+        m_context->hyperspace->unlink(filename.c_str());
+      }
+      catch (Exception &e) {
+        if (e.code() != Error::HYPERSPACE_FILE_NOT_FOUND &&
+            e.code() != Error::HYPERSPACE_BAD_PATHNAME)
+          HT_THROW2F(e.code(), e, "Error executing DropTable %s", 
+                  index_name.c_str());
+      }
+      m_context->monitoring->invalidate_id_mapping(index_id);
+    }
+
+    // then try to delete the qualifier index table if it exists
+    if (m_context->namemap->name_to_id(qualifier_index_name, qualifier_index_id)) {
+      HT_INFOF("  Dropping qualifier index table %s (id %s)", 
+           qualifier_index_name.c_str(), qualifier_index_id.c_str());
+      try {
+        m_context->namemap->drop_mapping(qualifier_index_name);
+        filename = m_context->toplevel_dir + "/tables/" + qualifier_index_id;
+        m_context->hyperspace->unlink(filename.c_str());
+      }
+      catch (Exception &e) {
+        if (e.code() != Error::HYPERSPACE_FILE_NOT_FOUND &&
+            e.code() != Error::HYPERSPACE_BAD_PATHNAME)
+          HT_THROW2F(e.code(), e, "Error executing DropTable %s", 
+                  qualifier_index_name.c_str());
+      }
+      m_context->monitoring->invalidate_id_mapping(qualifier_index_id);
+    }
+
+    // now drop the "primary" table
     try {
       m_context->namemap->drop_mapping(m_name);
       filename = m_context->toplevel_dir + "/tables/" + m_id;
@@ -158,11 +207,13 @@ void OperationDropTable::execute() {
     catch (Exception &e) {
       if (e.code() != Error::HYPERSPACE_FILE_NOT_FOUND &&
           e.code() != Error::HYPERSPACE_BAD_PATHNAME)
-        HT_THROW2F(e.code(), e, "Error executing DropTable %s", m_name.c_str());
+        HT_THROW2F(e.code(), e, "Error executing DropTable %s", 
+                m_name.c_str());
     }
     m_context->monitoring->invalidate_id_mapping(m_id);
     complete_ok();
     break;
+  }
 
   default:
     HT_FATALF("Unrecognized state %d", state);

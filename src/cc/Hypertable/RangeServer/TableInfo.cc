@@ -219,14 +219,15 @@ void TableInfo::unstage_range(const RangeSpec *range_spec) {
   RangeInfo range_info(range_spec->start_row, range_spec->end_row);
   RangeInfoSet::iterator iter = m_range_set.find(range_info);
 
-  HT_ASSERT(iter != m_range_set.end());
+  if (iter == m_range_set.end())
+    return;
+
   HT_ASSERT(!iter->get_range());
   HT_INFOF("Unstaging range %s[%s..%s] to TableInfo",
            m_identifier.id, range_spec->start_row,
            range_spec->end_row);
   m_range_set.erase(iter);
 }
-
 
 void TableInfo::add_staged_range(RangePtr &range) {
   ScopedLock lock(m_mutex);

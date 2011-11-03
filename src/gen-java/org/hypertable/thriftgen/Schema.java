@@ -386,16 +386,16 @@ public class Schema implements org.apache.thrift.TBase<Schema, Schema._Fields>, 
         case 1: // ACCESS_GROUPS
           if (field.type == org.apache.thrift.protocol.TType.MAP) {
             {
-              org.apache.thrift.protocol.TMap _map28 = iprot.readMapBegin();
-              this.access_groups = new HashMap<String,AccessGroup>(2*_map28.size);
-              for (int _i29 = 0; _i29 < _map28.size; ++_i29)
+              org.apache.thrift.protocol.TMap _map32 = iprot.readMapBegin();
+              this.access_groups = new HashMap<String,AccessGroup>(2*_map32.size);
+              for (int _i33 = 0; _i33 < _map32.size; ++_i33)
               {
-                String _key30; // required
-                AccessGroup _val31; // required
-                _key30 = iprot.readString();
-                _val31 = new AccessGroup();
-                _val31.read(iprot);
-                this.access_groups.put(_key30, _val31);
+                String _key34; // required
+                AccessGroup _val35; // required
+                _key34 = iprot.readString();
+                _val35 = new AccessGroup();
+                _val35.read(iprot);
+                this.access_groups.put(_key34, _val35);
               }
               iprot.readMapEnd();
             }
@@ -406,16 +406,16 @@ public class Schema implements org.apache.thrift.TBase<Schema, Schema._Fields>, 
         case 2: // COLUMN_FAMILIES
           if (field.type == org.apache.thrift.protocol.TType.MAP) {
             {
-              org.apache.thrift.protocol.TMap _map32 = iprot.readMapBegin();
-              this.column_families = new HashMap<String,ColumnFamily>(2*_map32.size);
-              for (int _i33 = 0; _i33 < _map32.size; ++_i33)
+              org.apache.thrift.protocol.TMap _map36 = iprot.readMapBegin();
+              this.column_families = new HashMap<String,ColumnFamily>(2*_map36.size);
+              for (int _i37 = 0; _i37 < _map36.size; ++_i37)
               {
-                String _key34; // required
-                ColumnFamily _val35; // required
-                _key34 = iprot.readString();
-                _val35 = new ColumnFamily();
-                _val35.read(iprot);
-                this.column_families.put(_key34, _val35);
+                String _key38; // required
+                ColumnFamily _val39; // required
+                _key38 = iprot.readString();
+                _val39 = new ColumnFamily();
+                _val39.read(iprot);
+                this.column_families.put(_key38, _val39);
               }
               iprot.readMapEnd();
             }
@@ -443,10 +443,10 @@ public class Schema implements org.apache.thrift.TBase<Schema, Schema._Fields>, 
         oprot.writeFieldBegin(ACCESS_GROUPS_FIELD_DESC);
         {
           oprot.writeMapBegin(new org.apache.thrift.protocol.TMap(org.apache.thrift.protocol.TType.STRING, org.apache.thrift.protocol.TType.STRUCT, this.access_groups.size()));
-          for (Map.Entry<String, AccessGroup> _iter36 : this.access_groups.entrySet())
+          for (Map.Entry<String, AccessGroup> _iter40 : this.access_groups.entrySet())
           {
-            oprot.writeString(_iter36.getKey());
-            _iter36.getValue().write(oprot);
+            oprot.writeString(_iter40.getKey());
+            _iter40.getValue().write(oprot);
           }
           oprot.writeMapEnd();
         }
@@ -458,10 +458,10 @@ public class Schema implements org.apache.thrift.TBase<Schema, Schema._Fields>, 
         oprot.writeFieldBegin(COLUMN_FAMILIES_FIELD_DESC);
         {
           oprot.writeMapBegin(new org.apache.thrift.protocol.TMap(org.apache.thrift.protocol.TType.STRING, org.apache.thrift.protocol.TType.STRUCT, this.column_families.size()));
-          for (Map.Entry<String, ColumnFamily> _iter37 : this.column_families.entrySet())
+          for (Map.Entry<String, ColumnFamily> _iter41 : this.column_families.entrySet())
           {
-            oprot.writeString(_iter37.getKey());
-            _iter37.getValue().write(oprot);
+            oprot.writeString(_iter41.getKey());
+            _iter41.getValue().write(oprot);
           }
           oprot.writeMapEnd();
         }

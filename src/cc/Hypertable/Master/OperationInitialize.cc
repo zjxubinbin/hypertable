@@ -50,6 +50,7 @@ OperationInitialize::OperationInitialize(ContextPtr &context,
 void OperationInitialize::execute() {
   std::vector<Entity *> entities;
   Operation *operation = 0;
+  Operation *operation2 = 0;
   String filename, schema;
   uint64_t handle = 0;
   RangeSpec range;
@@ -83,11 +84,15 @@ void OperationInitialize::execute() {
     operation = new OperationCreateNamespace(m_context, "/sys", 0);
     operation->add_obstruction("initialize[0]");
     entities.push_back(operation);
+    operation2 = new OperationCreateNamespace(m_context, "/tmp", 0);
+    operation2->add_obstruction("initialize[1]");
+    entities.push_back(operation2);
     entities.push_back(this);
     m_context->mml_writer->record_state(entities);
     {
       ScopedLock lock(m_mutex);
       m_sub_ops.push_back(operation);
+      m_sub_ops.push_back(operation2);
     }
     HT_MAYBE_FAIL("initialize-INITIAL");
     return;
@@ -191,10 +196,10 @@ void OperationInitialize::execute() {
     filename = System::install_dir + "/conf/RS_METRICS.xml";
     schema = FileUtils::file_to_string(filename);
     operation = new OperationCreateTable(m_context, "/sys/RS_METRICS", schema);
-    operation->add_obstruction("initialize[1]");
+    operation->add_obstruction("initialize[2]");
     {
       ScopedLock lock(m_mutex);
-      m_dependencies.insert("initialize[1]");
+      m_dependencies.insert("initialize[2]");
       m_state = OperationState::FINALIZE;
       m_sub_ops.push_back(operation);
     }

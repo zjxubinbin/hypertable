@@ -736,14 +736,14 @@ public class AccessGroup implements org.apache.thrift.TBase<AccessGroup, AccessG
         case 7: // COLUMNS
           if (field.type == org.apache.thrift.protocol.TType.LIST) {
             {
-              org.apache.thrift.protocol.TList _list24 = iprot.readListBegin();
-              this.columns = new ArrayList<ColumnFamily>(_list24.size);
-              for (int _i25 = 0; _i25 < _list24.size; ++_i25)
+              org.apache.thrift.protocol.TList _list28 = iprot.readListBegin();
+              this.columns = new ArrayList<ColumnFamily>(_list28.size);
+              for (int _i29 = 0; _i29 < _list28.size; ++_i29)
               {
-                ColumnFamily _elem26; // required
-                _elem26 = new ColumnFamily();
-                _elem26.read(iprot);
-                this.columns.add(_elem26);
+                ColumnFamily _elem30; // required
+                _elem30 = new ColumnFamily();
+                _elem30.read(iprot);
+                this.columns.add(_elem30);
               }
               iprot.readListEnd();
             }
@@ -807,9 +807,9 @@ public class AccessGroup implements org.apache.thrift.TBase<AccessGroup, AccessG
         oprot.writeFieldBegin(COLUMNS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, this.columns.size()));
-          for (ColumnFamily _iter27 : this.columns)
+          for (ColumnFamily _iter31 : this.columns)
           {
-            _iter27.write(oprot);
+            _iter31.write(oprot);
           }
           oprot.writeListEnd();
         }

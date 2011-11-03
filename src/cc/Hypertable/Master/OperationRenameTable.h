@@ -47,6 +47,14 @@ namespace Hypertable {
     String m_old_name;
     String m_new_name;
     String m_id;
+
+    String m_old_index_name;
+    String m_new_index_name;
+    String m_index_id;
+
+    String m_old_qualified_index_name;
+    String m_new_qualified_index_name;
+    String m_qualified_index_id;
   };
 
 

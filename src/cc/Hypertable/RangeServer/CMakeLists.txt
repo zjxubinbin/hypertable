@@ -56,6 +56,7 @@ Global.cc
 GroupCommit.cc
 GroupCommitTimerHandler.cc
 HyperspaceSessionHandler.cc
+IndexUpdater.cc
 KeyCompressorNone.cc
 KeyCompressorPrefix.cc
 KeyDecompressorNone.cc

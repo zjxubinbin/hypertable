@@ -755,23 +755,23 @@ public class ResultAsArrays implements org.apache.thrift.TBase<ResultAsArrays, R
         case 7: // CELLS
           if (field.type == org.apache.thrift.protocol.TType.LIST) {
             {
-              org.apache.thrift.protocol.TList _list16 = iprot.readListBegin();
-              this.cells = new ArrayList<List<String>>(_list16.size);
-              for (int _i17 = 0; _i17 < _list16.size; ++_i17)
+              org.apache.thrift.protocol.TList _list20 = iprot.readListBegin();
+              this.cells = new ArrayList<List<String>>(_list20.size);
+              for (int _i21 = 0; _i21 < _list20.size; ++_i21)
               {
-                List<String> _elem18; // required
+                List<String> _elem22; // required
                 {
-                  org.apache.thrift.protocol.TList _list19 = iprot.readListBegin();
-                  _elem18 = new ArrayList<String>(_list19.size);
-                  for (int _i20 = 0; _i20 < _list19.size; ++_i20)
+                  org.apache.thrift.protocol.TList _list23 = iprot.readListBegin();
+                  _elem22 = new ArrayList<String>(_list23.size);
+                  for (int _i24 = 0; _i24 < _list23.size; ++_i24)
                   {
-                    String _elem21; // required
-                    _elem21 = iprot.readString();
-                    _elem18.add(_elem21);
+                    String _elem25; // required
+                    _elem25 = iprot.readString();
+                    _elem22.add(_elem25);
                   }
                   iprot.readListEnd();
                 }
-                this.cells.add(_elem18);
+                this.cells.add(_elem22);
               }
               iprot.readListEnd();
             }
@@ -835,13 +835,13 @@ public class ResultAsArrays implements org.apache.thrift.TBase<ResultAsArrays, R
         oprot.writeFieldBegin(CELLS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.LIST, this.cells.size()));
-          for (List<String> _iter22 : this.cells)
+          for (List<String> _iter26 : this.cells)
           {
             {
-              oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, _iter22.size()));
-              for (String _iter23 : _iter22)
+              oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, _iter26.size()));
+              for (String _iter27 : _iter26)
               {
-                oprot.writeString(_iter23);
+                oprot.writeString(_iter27);
               }
               oprot.writeListEnd();
             }

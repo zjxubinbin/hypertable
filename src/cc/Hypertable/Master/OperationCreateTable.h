@@ -47,8 +47,12 @@ namespace Hypertable {
     String m_name;
     String m_schema;
     TableIdentifierManaged m_table;
+    TableIdentifierManaged m_index_table;
+    TableIdentifierManaged m_qualifier_index_table;
     String m_location;
     String m_range_name;
+    String m_index_range_name;
+    String m_qualifier_index_range_name;
   };
 
   typedef intrusive_ptr<OperationCreateTable> OperationCreateTablePtr;

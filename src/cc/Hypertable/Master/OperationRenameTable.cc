@@ -74,12 +74,52 @@ void OperationRenameTable::execute() {
       complete_error(Error::TABLE_NOT_FOUND, m_old_name);
       return;
     }
+
+    // check if an index table exists; if yes add it to the exclusivities
+    m_old_index_name = Filesystem::dirname(m_old_name) 
+                   + "/^" + Filesystem::basename(m_old_name);
+    boost::trim_if(m_old_index_name, boost::is_any_of("/ "));
+    if (!Utility::table_exists(m_context, m_old_index_name, m_index_id))
+      m_old_index_name = "";
+    else {
+      m_new_index_name = Filesystem::dirname(m_new_name) 
+                     + "/^" + Filesystem::basename(m_new_name);
+      boost::trim_if(m_new_index_name, boost::is_any_of("/ "));
+    }
+
+    // and now the same for a qualified index
+    m_old_qualified_index_name = Filesystem::dirname(m_old_name) 
+                   + "/^^" + Filesystem::basename(m_old_name);
+    boost::trim_if(m_old_qualified_index_name, boost::is_any_of("/ "));
+    if (!Utility::table_exists(m_context, m_old_qualified_index_name, 
+                    m_qualified_index_id))
+      m_old_qualified_index_name = "";
+    else {
+      m_new_qualified_index_name = Filesystem::dirname(m_new_name) 
+                     + "/^^" + Filesystem::basename(m_new_name);
+      boost::trim_if(m_new_qualified_index_name, boost::is_any_of("/ "));
+      m_exclusivities.insert(m_old_qualified_index_name);
+      m_exclusivities.insert(m_new_qualified_index_name);
+    }
+
     set_state(OperationState::STARTED);
     m_context->mml_writer->record_state(this);
 
   case OperationState::STARTED:
     m_context->namemap->rename(m_old_name, m_new_name);
     m_context->monitoring->change_id_mapping(m_id, m_new_name);
+
+    if (m_index_id.size()) {
+      m_context->namemap->rename(m_old_index_name, m_new_index_name);
+      m_context->monitoring->change_id_mapping(m_index_id, m_new_index_name);
+    }
+
+    if (m_qualified_index_id.size()) {
+      m_context->namemap->rename(m_old_qualified_index_name, 
+                        m_new_qualified_index_name);
+      m_context->monitoring->change_id_mapping(m_qualified_index_id, 
+                        m_new_qualified_index_name);
+    }
     HT_MAYBE_FAIL("rename-table-STARTED");
     complete_ok();
     break;
@@ -90,12 +130,22 @@ void OperationRenameTable::execute() {
 
   HT_INFOF("Leaving RenameTable-%lld(%s, %s)",
            (Lld)header.id, m_old_name.c_str(), m_new_name.c_str());
-
 }
 
 
 void OperationRenameTable::display_state(std::ostream &os) {
-  os << " old_name=" << m_old_name << " new_name=" << m_new_name << " id=" << m_id << " ";
+  os << " old_name=" << m_old_name << " new_name=" << m_new_name 
+     << " id=" << m_id << " ";
+  if (m_index_id.size()) {
+    os << " old_index_name=" << m_old_index_name 
+       << " new_index_name=" << m_new_index_name 
+       << " index_id=" << m_index_id << " ";
+  }
+  if (m_qualified_index_id.size()) {
+    os << " old_qualified_index_name=" << m_old_qualified_index_name 
+       << " new_qualified_index_name=" << m_new_qualified_index_name 
+       << " qualified_index_id=" << m_qualified_index_id << " ";
+  }
 }
 
 size_t OperationRenameTable::encoded_state_length() const {

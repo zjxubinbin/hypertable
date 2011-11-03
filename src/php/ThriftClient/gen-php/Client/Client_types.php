@@ -7,6 +7,20 @@
 include_once $GLOBALS['THRIFT_ROOT'].'/Thrift.php';
 
 
+$GLOBALS['E_ColumnPredicateOperation'] = array(
+  'EXACT_MATCH' => 1,
+  'PREFIX_MATCH' => 2,
+);
+
+final class ColumnPredicateOperation {
+  const EXACT_MATCH = 1;
+  const PREFIX_MATCH = 2;
+  static public $__names = array(
+    1 => 'EXACT_MATCH',
+    2 => 'PREFIX_MATCH',
+  );
+}
+
 $GLOBALS['E_KeyFlag'] = array(
   'DELETE_ROW' => 0,
   'DELETE_CF' => 1,
@@ -348,6 +362,118 @@ class CellInterval {
 
 }
 
+class ColumnPredicate {
+  static $_TSPEC;
+
+  public $column_family = null;
+  public $operation = null;
+  public $value = null;
+
+  public function __construct($vals=null) {
+    if (!isset(self::$_TSPEC)) {
+      self::$_TSPEC = array(
+        1 => array(
+          'var' => 'column_family',
+          'type' => TType::STRING,
+          ),
+        2 => array(
+          'var' => 'operation',
+          'type' => TType::I32,
+          ),
+        3 => array(
+          'var' => 'value',
+          'type' => TType::STRING,
+          ),
+        );
+    }
+    if (is_array($vals)) {
+      if (isset($vals['column_family'])) {
+        $this->column_family = $vals['column_family'];
+      }
+      if (isset($vals['operation'])) {
+        $this->operation = $vals['operation'];
+      }
+      if (isset($vals['value'])) {
+        $this->value = $vals['value'];
+      }
+    }
+  }
+
+  public function getName() {
+    return 'ColumnPredicate';
+  }
+
+  public function read($input)
+  {
+    $xfer = 0;
+    $fname = null;
+    $ftype = 0;
+    $fid = 0;
+    $xfer += $input->readStructBegin($fname);
+    while (true)
+    {
+      $xfer += $input->readFieldBegin($fname, $ftype, $fid);
+      if ($ftype == TType::STOP) {
+        break;
+      }
+      switch ($fid)
+      {
+        case 1:
+          if ($ftype == TType::STRING) {
+            $xfer += $input->readString($this->column_family);
+          } else {
+            $xfer += $input->skip($ftype);
+          }
+          break;
+        case 2:
+          if ($ftype == TType::I32) {
+            $xfer += $input->readI32($this->operation);
+          } else {
+            $xfer += $input->skip($ftype);
+          }
+          break;
+        case 3:
+          if ($ftype == TType::STRING) {
+            $xfer += $input->readString($this->value);
+          } else {
+            $xfer += $input->skip($ftype);
+          }
+          break;
+        default:
+          $xfer += $input->skip($ftype);
+          break;
+      }
+      $xfer += $input->readFieldEnd();
+    }
+    $xfer += $input->readStructEnd();
+    return $xfer;
+  }
+
+  public function write($output) {
+    $xfer = 0;
+    $xfer += $output->writeStructBegin('ColumnPredicate');
+    if ($this->column_family !== null) {
+      $xfer += $output->writeFieldBegin('column_family', TType::STRING, 1);
+      $xfer += $output->writeString($this->column_family);
+      $xfer += $output->writeFieldEnd();
+    }
+    if ($this->operation !== null) {
+      $xfer += $output->writeFieldBegin('operation', TType::I32, 2);
+      $xfer += $output->writeI32($this->operation);
+      $xfer += $output->writeFieldEnd();
+    }
+    if ($this->value !== null) {
+      $xfer += $output->writeFieldBegin('value', TType::STRING, 3);
+      $xfer += $output->writeString($this->value);
+      $xfer += $output->writeFieldEnd();
+    }
+    $xfer += $output->writeFieldStop();
+    $xfer += $output->writeStructEnd();
+    return $xfer;
+  }
+
+}
+
 class ScanSpec {
   static $_TSPEC;
 
@@ -367,6 +493,7 @@ class ScanSpec {
   public $scan_and_filter_rows = false;
   public $row_offset = 0;
   public $cell_offset = 0;
+  public $column_predicates = null;
 
   public function __construct($vals=null) {
     if (!isset(self::$_TSPEC)) {
@@ -449,6 +576,15 @@ class ScanSpec {
           'var' => 'cell_offset',
           'type' => TType::I32,
           ),
+        17 => array(
+          'var' => 'column_predicates',
+          'type' => TType::LST,
+          'etype' => TType::STRUCT,
+          'elem' => array(
+            'type' => TType::STRUCT,
+            'class' => 'ColumnPredicate',
+            ),
+          ),
         );
     }
     if (is_array($vals)) {
@@ -499,6 +635,9 @@ class ScanSpec {
       }
       if (isset($vals['cell_offset'])) {
         $this->cell_offset = $vals['cell_offset'];
+      }
+      if (isset($vals['column_predicates'])) {
+        $this->column_predicates = $vals['column_predicates'];
       }
     }
   }
@@ -666,6 +805,24 @@ class ScanSpec {
             $xfer += $input->skip($ftype);
           }
           break;
+        case 17:
+          if ($ftype == TType::LST) {
+            $this->column_predicates = array();
+            $_size18 = 0;
+            $_etype21 = 0;
+            $xfer += $input->readListBegin($_etype21, $_size18);
+            for ($_i22 = 0; $_i22 < $_size18; ++$_i22)
+            {
+              $elem23 = null;
+              $elem23 = new ColumnPredicate();
+              $xfer += $elem23->read($input);
+              $this->column_predicates []= $elem23;
+            }
+            $xfer += $input->readListEnd();
+          } else {
+            $xfer += $input->skip($ftype);
+          }
+          break;
         default:
           $xfer += $input->skip($ftype);
           break;
@@ -687,9 +844,9 @@ class ScanSpec {
       {
         $output->writeListBegin(TType::STRUCT, count($this->row_intervals));
         {
-          foreach ($this->row_intervals as $iter18)
+          foreach ($this->row_intervals as $iter24)
           {
-            $xfer += $iter18->write($output);
+            $xfer += $iter24->write($output);
           }
         }
         $output->writeListEnd();
@@ -704,9 +861,9 @@ class ScanSpec {
       {
         $output->writeListBegin(TType::STRUCT, count($this->cell_intervals));
         {
-          foreach ($this->cell_intervals as $iter19)
+          foreach ($this->cell_intervals as $iter25)
           {
-            $xfer += $iter19->write($output);
+            $xfer += $iter25->write($output);
           }
         }
         $output->writeListEnd();
@@ -746,9 +903,9 @@ class ScanSpec {
       {
         $output->writeListBegin(TType::STRING, count($this->columns));
         {
-          foreach ($this->columns as $iter20)
+          foreach ($this->columns as $iter26)
           {
-            $xfer += $output->writeString($iter20);
+            $xfer += $output->writeString($iter26);
           }
         }
         $output->writeListEnd();
@@ -793,6 +950,23 @@ class ScanSpec {
     if ($this->cell_offset !== null) {
       $xfer += $output->writeFieldBegin('cell_offset', TType::I32, 16);
       $xfer += $output->writeI32($this->cell_offset);
+      $xfer += $output->writeFieldEnd();
+    }
+    if ($this->column_predicates !== null) {
+      if (!is_array($this->column_predicates)) {
+        throw new TProtocolException('Bad type in structure.', TProtocolException::INVALID_DATA);
+      }
+      $xfer += $output->writeFieldBegin('column_predicates', TType::LST, 17);
+      {
+        $output->writeListBegin(TType::STRUCT, count($this->column_predicates));
+        {
+          foreach ($this->column_predicates as $iter27)
+          {
+            $xfer += $iter27->write($output);
+          }
+        }
+        $output->writeListEnd();
+      }
       $xfer += $output->writeFieldEnd();
     }
     $xfer += $output->writeFieldStop();
@@ -1321,15 +1495,15 @@ class Result {
         case 7:
           if ($ftype == TType::LST) {
             $this->cells = array();
-            $_size21 = 0;
-            $_etype24 = 0;
-            $xfer += $input->readListBegin($_etype24, $_size21);
-            for ($_i25 = 0; $_i25 < $_size21; ++$_i25)
+            $_size28 = 0;
+            $_etype31 = 0;
+            $xfer += $input->readListBegin($_etype31, $_size28);
+            for ($_i32 = 0; $_i32 < $_size28; ++$_i32)
             {
-              $elem26 = null;
-              $elem26 = new Cell();
-              $xfer += $elem26->read($input);
-              $this->cells []= $elem26;
+              $elem33 = null;
+              $elem33 = new Cell();
+              $xfer += $elem33->read($input);
+              $this->cells []= $elem33;
             }
             $xfer += $input->readListEnd();
           } else {
@@ -1387,9 +1561,9 @@ class Result {
       {
         $output->writeListBegin(TType::STRUCT, count($this->cells));
         {
-          foreach ($this->cells as $iter27)
+          foreach ($this->cells as $iter34)
           {
-            $xfer += $iter27->write($output);
+            $xfer += $iter34->write($output);
           }
         }
         $output->writeListEnd();
@@ -1544,24 +1718,24 @@ class ResultAsArrays {
         case 7:
           if ($ftype == TType::LST) {
             $this->cells = array();
-            $_size28 = 0;
-            $_etype31 = 0;
-            $xfer += $input->readListBegin($_etype31, $_size28);
-            for ($_i32 = 0; $_i32 < $_size28; ++$_i32)
+            $_size35 = 0;
+            $_etype38 = 0;
+            $xfer += $input->readListBegin($_etype38, $_size35);
+            for ($_i39 = 0; $_i39 < $_size35; ++$_i39)
             {
-              $elem33 = null;
-              $elem33 = array();
-              $_size34 = 0;
-              $_etype37 = 0;
-              $xfer += $input->readListBegin($_etype37, $_size34);
-              for ($_i38 = 0; $_i38 < $_size34; ++$_i38)
+              $elem40 = null;
+              $elem40 = array();
+              $_size41 = 0;
+              $_etype44 = 0;
+              $xfer += $input->readListBegin($_etype44, $_size41);
+              for ($_i45 = 0; $_i45 < $_size41; ++$_i45)
               {
-                $elem39 = null;
-                $xfer += $input->readString($elem39);
-                $elem33 []= $elem39;
+                $elem46 = null;
+                $xfer += $input->readString($elem46);
+                $elem40 []= $elem46;
               }
               $xfer += $input->readListEnd();
-              $this->cells []= $elem33;
+              $this->cells []= $elem40;
             }
             $xfer += $input->readListEnd();
           } else {
@@ -1619,14 +1793,14 @@ class ResultAsArrays {
       {
         $output->writeListBegin(TType::LST, count($this->cells));
         {
-          foreach ($this->cells as $iter40)
+          foreach ($this->cells as $iter47)
           {
             {
-              $output->writeListBegin(TType::STRING, count($iter40));
+              $output->writeListBegin(TType::STRING, count($iter47));
               {
-                foreach ($iter40 as $iter41)
+                foreach ($iter47 as $iter48)
                 {
-                  $xfer += $output->writeString($iter41);
+                  $xfer += $output->writeString($iter48);
                 }
               }
               $output->writeListEnd();
@@ -2350,15 +2524,15 @@ class AccessGroup {
         case 7:
           if ($ftype == TType::LST) {
             $this->columns = array();
-            $_size42 = 0;
-            $_etype45 = 0;
-            $xfer += $input->readListBegin($_etype45, $_size42);
-            for ($_i46 = 0; $_i46 < $_size42; ++$_i46)
+            $_size49 = 0;
+            $_etype52 = 0;
+            $xfer += $input->readListBegin($_etype52, $_size49);
+            for ($_i53 = 0; $_i53 < $_size49; ++$_i53)
             {
-              $elem47 = null;
-              $elem47 = new ColumnFamily();
-              $xfer += $elem47->read($input);
-              $this->columns []= $elem47;
+              $elem54 = null;
+              $elem54 = new ColumnFamily();
+              $xfer += $elem54->read($input);
+              $this->columns []= $elem54;
             }
             $xfer += $input->readListEnd();
           } else {
@@ -2416,9 +2590,9 @@ class AccessGroup {
       {
         $output->writeListBegin(TType::STRUCT, count($this->columns));
         {
-          foreach ($this->columns as $iter48)
+          foreach ($this->columns as $iter55)
           {
-            $xfer += $iter48->write($output);
+            $xfer += $iter55->write($output);
           }
         }
         $output->writeListEnd();
@@ -2501,18 +2675,18 @@ class Schema {
         case 1:
           if ($ftype == TType::MAP) {
             $this->access_groups = array();
-            $_size49 = 0;
-            $_ktype50 = 0;
-            $_vtype51 = 0;
-            $xfer += $input->readMapBegin($_ktype50, $_vtype51, $_size49);
-            for ($_i53 = 0; $_i53 < $_size49; ++$_i53)
+            $_size56 = 0;
+            $_ktype57 = 0;
+            $_vtype58 = 0;
+            $xfer += $input->readMapBegin($_ktype57, $_vtype58, $_size56);
+            for ($_i60 = 0; $_i60 < $_size56; ++$_i60)
             {
-              $key54 = '';
-              $val55 = new AccessGroup();
-              $xfer += $input->readString($key54);
-              $val55 = new AccessGroup();
-              $xfer += $val55->read($input);
-              $this->access_groups[$key54] = $val55;
+              $key61 = '';
+              $val62 = new AccessGroup();
+              $xfer += $input->readString($key61);
+              $val62 = new AccessGroup();
+              $xfer += $val62->read($input);
+              $this->access_groups[$key61] = $val62;
             }
             $xfer += $input->readMapEnd();
           } else {
@@ -2522,18 +2696,18 @@ class Schema {
         case 2:
           if ($ftype == TType::MAP) {
             $this->column_families = array();
-            $_size56 = 0;
-            $_ktype57 = 0;
-            $_vtype58 = 0;
-            $xfer += $input->readMapBegin($_ktype57, $_vtype58, $_size56);
-            for ($_i60 = 0; $_i60 < $_size56; ++$_i60)
+            $_size63 = 0;
+            $_ktype64 = 0;
+            $_vtype65 = 0;
+            $xfer += $input->readMapBegin($_ktype64, $_vtype65, $_size63);
+            for ($_i67 = 0; $_i67 < $_size63; ++$_i67)
             {
-              $key61 = '';
-              $val62 = new ColumnFamily();
-              $xfer += $input->readString($key61);
-              $val62 = new ColumnFamily();
-              $xfer += $val62->read($input);
-              $this->column_families[$key61] = $val62;
+              $key68 = '';
+              $val69 = new ColumnFamily();
+              $xfer += $input->readString($key68);
+              $val69 = new ColumnFamily();
+              $xfer += $val69->read($input);
+              $this->column_families[$key68] = $val69;
             }
             $xfer += $input->readMapEnd();
           } else {
@@ -2561,10 +2735,10 @@ class Schema {
       {
         $output->writeMapBegin(TType::STRING, TType::STRUCT, count($this->access_groups));
         {
-          foreach ($this->access_groups as $kiter63 => $viter64)
+          foreach ($this->access_groups as $kiter70 => $viter71)
           {
-            $xfer += $output->writeString($kiter63);
-            $xfer += $viter64->write($output);
+            $xfer += $output->writeString($kiter70);
+            $xfer += $viter71->write($output);
           }
         }
         $output->writeMapEnd();
@@ -2579,10 +2753,10 @@ class Schema {
       {
         $output->writeMapBegin(TType::STRING, TType::STRUCT, count($this->column_families));
         {
-          foreach ($this->column_families as $kiter65 => $viter66)
+          foreach ($this->column_families as $kiter72 => $viter73)
           {
-            $xfer += $output->writeString($kiter65);
-            $xfer += $viter66->write($output);
+            $xfer += $output->writeString($kiter72);
+            $xfer += $viter73->write($output);
           }
         }
         $output->writeMapEnd();

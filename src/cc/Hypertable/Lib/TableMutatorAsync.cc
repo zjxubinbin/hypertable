@@ -33,6 +33,8 @@ extern "C" {
 #include "ResultCallback.h"
 #include "TableMutatorSyncDispatchHandler.h"
 #include "Table.h"
+#include "TableMutator.h"
+#include "LoadDataEscape.h"
 
 using namespace Hypertable;
 using namespace Hypertable::Config;
@@ -90,6 +92,18 @@ void TableMutatorAsync::initialize(PropertiesPtr &props) {
   m_current_buffer = new TableMutatorAsyncScatterBuffer(m_comm, m_app_queue, this,
       &m_table_identifier, m_schema, m_range_locator, m_table->auto_refresh(), m_timeout_ms,
       buffer_id);
+
+  // create new index mutator
+  if (m_table->has_index_table())
+    m_index_mutator=new TableMutator(props, m_comm, 
+                                    &(*m_table->get_index_table()), 
+                                    m_range_locator, m_timeout_ms, m_flags);
+  // create new qualifier index mutator
+  if (m_table->has_qualifier_index_table())
+    m_qualifier_index_mutator=new TableMutator(props, m_comm, 
+                                    &(*m_table->get_qualifier_index_table()), 
+                                    m_range_locator, m_timeout_ms, m_flags);
+
   if (m_cb)
     m_cb->register_mutator(this);
 }
@@ -116,6 +130,87 @@ void TableMutatorAsync::wait_for_completion() {
 }
 
 void
+TableMutatorAsync::update_index(Key &key, const void *value, uint32_t value_len) {
+  HT_ASSERT(key.flag == FLAG_INSERT);
+
+  // only continue if the column family is indexed
+  Schema::ColumnFamily *cf=m_schema->get_column_family(key.column_family_code);
+  if (!cf || (!cf->has_index && !cf->has_qualifier_index))
+    return;
+
+  // indexed keys get an auto-assigned timestamp to make sure that the 
+  // index key and the original key have identical timestamps
+  if (key.timestamp == AUTO_ASSIGN)
+    key.timestamp = get_ts64();
+
+  // now create the key for the index
+  KeySpec k;
+  k.timestamp = key.timestamp;
+  k.flag = key.flag;
+  k.column_family = "v1";
+
+  // every \t in the original row key gets escaped
+  const char *row;
+  size_t rowlen;
+  LoadDataEscape lde, ldev;
+  lde.escape(key.row, key.row_len, &row, &rowlen);
+
+  // in a normal (non-qualifier) index the format of the new row
+  // key is "value\trow"
+  //
+  // if value has a 0 byte then we also have to escape it
+  if (cf->has_index) {
+    const char *val_ptr = (const char *)value;
+    for (const char *v = val_ptr; v < val_ptr + value_len; v++) {
+      if (*v == '\0') {
+        const char *outp;
+        ldev.escape(val_ptr, (size_t)value_len, 
+                    &outp, (size_t *)&value_len);
+        value = outp;
+        break;
+      }
+    }
+    StaticBuffer sb(4 + value_len + rowlen + 1 + 1);
+    char *p = (char *)sb.base;
+    sprintf(p, "%d,", (int)cf->id);
+    p     += strlen(p);
+    memcpy(p, value, value_len);
+    p     += value_len;
+    *p++  = '\t';
+    memcpy(p, row, rowlen);
+    p     += rowlen;
+    *p++  = '\0';
+    k.row = sb.base;
+    k.row_len = p - 1 - (const char *)sb.base; /* w/o the terminating zero */
+
+    // and insert it
+    m_index_mutator->set(k, 0, 0);
+  }
+
+  // in a qualifier index the format of the new row key is "qualifier\trow"
+  if (cf->has_qualifier_index) {
+    size_t qlen = key.column_qualifier ? strlen(key.column_qualifier) : 0;
+    StaticBuffer sb(4 + qlen + rowlen + 1 + 1);
+    char *p = (char *)sb.base;
+    sprintf(p, "%d,", (int)cf->id);
+    p     += strlen(p);
+    if (qlen) {
+      memcpy(p, key.column_qualifier, qlen);
+      p   += qlen;
+    }
+    *p++  = '\t';
+    memcpy(p, row, rowlen);
+    p     += rowlen;
+    *p++  = '\0';
+    k.row = sb.base;
+    k.row_len = p - 1 - (const char *)sb.base; /* w/o the terminating zero */
+
+    // and insert it
+    m_qualifier_index_mutator->set(k, 0, 0);
+  }
+}
+
+void
 TableMutatorAsync::set(const KeySpec &key, const void *value, uint32_t value_len) {
   bool unknown_cf;
   bool ignore_unknown_cfs = (m_flags & Table::MUTATOR_FLAG_IGNORE_UNKNOWN_CFS) ;
@@ -128,6 +223,12 @@ TableMutatorAsync::set(const KeySpec &key, const void *value, uint32_t value_len
     to_full_key(key, full_key, unknown_cf);
     if (ignore_unknown_cfs && unknown_cf)
       return;
+
+    // first update secondary index, then set the key
+    full_key.row_len = key.row_len;
+    if (key.flag == FLAG_INSERT && (m_index_mutator || m_qualifier_index_mutator))
+      update_index(full_key, value, value_len);
+
     incr_mem = 20 + key.row_len + key.column_qualifier_len + value_len;
     m_current_buffer->set(full_key, value, value_len, incr_mem);
     m_memory_used += incr_mem;
@@ -165,8 +266,16 @@ TableMutatorAsync::set_cells(Cells::const_iterator it, Cells::const_iterator end
         if (ignore_unknown_cfs && unknown_cf)
           continue;
       }
+
+      if (cell.row_key)
+        full_key.row_len = strlen(cell.row_key);
+
+      // first update secondary index, then set the key
+      if (cell.flag == FLAG_INSERT && (m_index_mutator || m_qualifier_index_mutator))
+        update_index(full_key, cell.value, cell.value_len);
+
       // assuming all inserts for now
-      incr_mem = 20 + strlen(cell.row_key)
+      incr_mem = 20 + full_key.row_len
                 + (cell.column_qualifier ? strlen(cell.column_qualifier) : 0);
       m_current_buffer->set(full_key, cell.value, cell.value_len, incr_mem);
       m_memory_used += incr_mem;
@@ -197,6 +306,7 @@ void TableMutatorAsync::set_delete(const KeySpec &key) {
       if (ignore_unknown_cfs && unknown_cf)
         return;
     }
+
     incr_mem = 20 + key.row_len + key.column_qualifier_len;
     m_current_buffer->set_delete(full_key, incr_mem);
     m_memory_used += incr_mem;

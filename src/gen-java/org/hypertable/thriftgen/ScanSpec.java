@@ -92,6 +92,7 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
   private static final org.apache.thrift.protocol.TField SCAN_AND_FILTER_ROWS_FIELD_DESC = new org.apache.thrift.protocol.TField("scan_and_filter_rows", org.apache.thrift.protocol.TType.BOOL, (short)13);
   private static final org.apache.thrift.protocol.TField ROW_OFFSET_FIELD_DESC = new org.apache.thrift.protocol.TField("row_offset", org.apache.thrift.protocol.TType.I32, (short)15);
   private static final org.apache.thrift.protocol.TField CELL_OFFSET_FIELD_DESC = new org.apache.thrift.protocol.TField("cell_offset", org.apache.thrift.protocol.TType.I32, (short)16);
+  private static final org.apache.thrift.protocol.TField COLUMN_PREDICATES_FIELD_DESC = new org.apache.thrift.protocol.TField("column_predicates", org.apache.thrift.protocol.TType.LIST, (short)17);
 
   public List<RowInterval> row_intervals; // required
   public List<CellInterval> cell_intervals; // required
@@ -109,6 +110,7 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
   public boolean scan_and_filter_rows; // required
   public int row_offset; // required
   public int cell_offset; // required
+  public List<ColumnPredicate> column_predicates; // required
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -127,7 +129,8 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
     VALUE_REGEXP((short)12, "value_regexp"),
     SCAN_AND_FILTER_ROWS((short)13, "scan_and_filter_rows"),
     ROW_OFFSET((short)15, "row_offset"),
-    CELL_OFFSET((short)16, "cell_offset");
+    CELL_OFFSET((short)16, "cell_offset"),
+    COLUMN_PREDICATES((short)17, "column_predicates");
 
     private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
 
@@ -174,6 +177,8 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
           return ROW_OFFSET;
         case 16: // CELL_OFFSET
           return CELL_OFFSET;
+        case 17: // COLUMN_PREDICATES
+          return COLUMN_PREDICATES;
         default:
           return null;
       }
@@ -265,6 +270,9 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I32)));
     tmpMap.put(_Fields.CELL_OFFSET, new org.apache.thrift.meta_data.FieldMetaData("cell_offset", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I32)));
+    tmpMap.put(_Fields.COLUMN_PREDICATES, new org.apache.thrift.meta_data.FieldMetaData("column_predicates", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
+            new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ColumnPredicate.class))));
     metaDataMap = Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(ScanSpec.class, metaDataMap);
   }
@@ -334,6 +342,13 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
     this.scan_and_filter_rows = other.scan_and_filter_rows;
     this.row_offset = other.row_offset;
     this.cell_offset = other.cell_offset;
+    if (other.isSetColumn_predicates()) {
+      List<ColumnPredicate> __this__column_predicates = new ArrayList<ColumnPredicate>();
+      for (ColumnPredicate other_element : other.column_predicates) {
+        __this__column_predicates.add(new ColumnPredicate(other_element));
+      }
+      this.column_predicates = __this__column_predicates;
+    }
   }
 
   public ScanSpec deepCopy() {
@@ -369,6 +384,7 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
 
     this.cell_offset = 0;
 
+    this.column_predicates = null;
   }
 
   public int getRow_intervalsSize() {
@@ -789,6 +805,45 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
     __isset_bit_vector.set(__CELL_OFFSET_ISSET_ID, value);
   }
 
+  public int getColumn_predicatesSize() {
+    return (this.column_predicates == null) ? 0 : this.column_predicates.size();
+  }
+
+  public java.util.Iterator<ColumnPredicate> getColumn_predicatesIterator() {
+    return (this.column_predicates == null) ? null : this.column_predicates.iterator();
+  }
+
+  public void addToColumn_predicates(ColumnPredicate elem) {
+    if (this.column_predicates == null) {
+      this.column_predicates = new ArrayList<ColumnPredicate>();
+    }
+    this.column_predicates.add(elem);
+  }
+
+  public List<ColumnPredicate> getColumn_predicates() {
+    return this.column_predicates;
+  }
+
+  public ScanSpec setColumn_predicates(List<ColumnPredicate> column_predicates) {
+    this.column_predicates = column_predicates;
+    return this;
+  }
+
+  public void unsetColumn_predicates() {
+    this.column_predicates = null;
+  }
+
+  /** Returns true if field column_predicates is set (has been assigned a value) and false otherwise */
+  public boolean isSetColumn_predicates() {
+    return this.column_predicates != null;
+  }
+
+  public void setColumn_predicatesIsSet(boolean value) {
+    if (!value) {
+      this.column_predicates = null;
+    }
+  }
+
   public void setFieldValue(_Fields field, Object value) {
     switch (field) {
     case ROW_INTERVALS:
@@ -919,6 +974,14 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
       }
       break;
 
+    case COLUMN_PREDICATES:
+      if (value == null) {
+        unsetColumn_predicates();
+      } else {
+        setColumn_predicates((List<ColumnPredicate>)value);
+      }
+      break;
+
     }
   }
 
@@ -972,6 +1035,9 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
     case CELL_OFFSET:
       return Integer.valueOf(getCell_offset());
 
+    case COLUMN_PREDICATES:
+      return getColumn_predicates();
+
     }
     throw new IllegalStateException();
   }
@@ -1015,6 +1081,8 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
       return isSetRow_offset();
     case CELL_OFFSET:
       return isSetCell_offset();
+    case COLUMN_PREDICATES:
+      return isSetColumn_predicates();
     }
     throw new IllegalStateException();
   }
@@ -1173,6 +1241,15 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
       if (!(this_present_cell_offset && that_present_cell_offset))
         return false;
       if (this.cell_offset != that.cell_offset)
+        return false;
+    }
+
+    boolean this_present_column_predicates = true && this.isSetColumn_predicates();
+    boolean that_present_column_predicates = true && that.isSetColumn_predicates();
+    if (this_present_column_predicates || that_present_column_predicates) {
+      if (!(this_present_column_predicates && that_present_column_predicates))
+        return false;
+      if (!this.column_predicates.equals(that.column_predicates))
         return false;
     }
 
@@ -1352,6 +1429,16 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
         return lastComparison;
       }
     }
+    lastComparison = Boolean.valueOf(isSetColumn_predicates()).compareTo(typedOther.isSetColumn_predicates());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetColumn_predicates()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.column_predicates, typedOther.column_predicates);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
     return 0;
   }
 
@@ -1524,6 +1611,24 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, field.type);
           }
           break;
+        case 17: // COLUMN_PREDICATES
+          if (field.type == org.apache.thrift.protocol.TType.LIST) {
+            {
+              org.apache.thrift.protocol.TList _list9 = iprot.readListBegin();
+              this.column_predicates = new ArrayList<ColumnPredicate>(_list9.size);
+              for (int _i10 = 0; _i10 < _list9.size; ++_i10)
+              {
+                ColumnPredicate _elem11; // required
+                _elem11 = new ColumnPredicate();
+                _elem11.read(iprot);
+                this.column_predicates.add(_elem11);
+              }
+              iprot.readListEnd();
+            }
+          } else { 
+            org.apache.thrift.protocol.TProtocolUtil.skip(iprot, field.type);
+          }
+          break;
         default:
           org.apache.thrift.protocol.TProtocolUtil.skip(iprot, field.type);
       }
@@ -1544,9 +1649,9 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
         oprot.writeFieldBegin(ROW_INTERVALS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, this.row_intervals.size()));
-          for (RowInterval _iter9 : this.row_intervals)
+          for (RowInterval _iter12 : this.row_intervals)
           {
-            _iter9.write(oprot);
+            _iter12.write(oprot);
           }
           oprot.writeListEnd();
         }
@@ -1558,9 +1663,9 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
         oprot.writeFieldBegin(CELL_INTERVALS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, this.cell_intervals.size()));
-          for (CellInterval _iter10 : this.cell_intervals)
+          for (CellInterval _iter13 : this.cell_intervals)
           {
-            _iter10.write(oprot);
+            _iter13.write(oprot);
           }
           oprot.writeListEnd();
         }
@@ -1597,9 +1702,9 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
         oprot.writeFieldBegin(COLUMNS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, this.columns.size()));
-          for (String _iter11 : this.columns)
+          for (String _iter14 : this.columns)
           {
-            oprot.writeString(_iter11);
+            oprot.writeString(_iter14);
           }
           oprot.writeListEnd();
         }
@@ -1649,6 +1754,20 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
       oprot.writeFieldBegin(CELL_OFFSET_FIELD_DESC);
       oprot.writeI32(this.cell_offset);
       oprot.writeFieldEnd();
+    }
+    if (this.column_predicates != null) {
+      if (isSetColumn_predicates()) {
+        oprot.writeFieldBegin(COLUMN_PREDICATES_FIELD_DESC);
+        {
+          oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, this.column_predicates.size()));
+          for (ColumnPredicate _iter15 : this.column_predicates)
+          {
+            _iter15.write(oprot);
+          }
+          oprot.writeListEnd();
+        }
+        oprot.writeFieldEnd();
+      }
     }
     oprot.writeFieldStop();
     oprot.writeStructEnd();
@@ -1772,6 +1891,16 @@ public class ScanSpec implements org.apache.thrift.TBase<ScanSpec, ScanSpec._Fie
       if (!first) sb.append(", ");
       sb.append("cell_offset:");
       sb.append(this.cell_offset);
+      first = false;
+    }
+    if (isSetColumn_predicates()) {
+      if (!first) sb.append(", ");
+      sb.append("column_predicates:");
+      if (this.column_predicates == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.column_predicates);
+      }
       first = false;
     }
     sb.append(")");
