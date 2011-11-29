@@ -56,67 +56,47 @@ using namespace std;
 
 atomic_t MaprBroker::ms_next_fd = ATOMIC_INIT(0);
 
-MaprBroker::MaprBroker(PropertiesPtr &cfg) : m_aggregate_writes(true), m_readbuffering(true) {
-
-{
+MaprBroker::MaprBroker(PropertiesPtr &cfg) {
   m_verbose = cfg->get_bool("verbose");
-  m_aggregate_writes = cfg->get_bool("DfsBroker.Mapr.aggregate.writes");
-  m_readbuffering = cfg->get_bool("DfsBroker.Mapr.readbuffering");
-  fs.mapr.aggregate.writes
+  m_aggregate_writes = cfg->get_bool("DfsBroker.Mapr.aggregate.writes", true);
+  m_readbuffering = cfg->get_bool("DfsBroker.Mapr.readbuffering", true);
+  m_namenode_host = cfg->get_str("DfsBroker.Hdfs.NameNode.Host");
+  m_namenode_port = cfg->get_i16("DfsBroker.Hdfs.NameNode.Host");
+
+  m_filesystem = hdfsConnectNewInstance(m_namenode_host.c_str(), m_namenode_port);
+
 }
 
 
 
 MaprBroker::~MaprBroker() {
+  hdfsDisconnect(m_filesystem);
 }
 
 
 void
 MaprBroker::open(ResponseCallbackOpen *cb, const char *fname, 
                   uint32_t flags, uint32_t bufsz) {
-  int fd, mapr_fd;
-  String abspath;
+  hdfsFile file;
+  int fd;
 
   HT_DEBUGF("open file='%s' flags=%u bufsz=%d", fname, flags, bufsz);
-
-  if (fname[0] == '/')
-    abspath = m_rootdir + fname;
-  else
-    abspath = m_rootdir + "/" + fname;
 
   fd = atomic_inc_return(&ms_next_fd);
 
   int oflags = O_RDONLY;
 
-  if (m_directio && flags & Filesystem::OPEN_FLAG_DIRECTIO) {
-#ifdef O_DIRECT
-    oflags |= O_DIRECT;
-#endif
-  }
-
-  /**
-   * Open the file
-   */
-  if ((mapr_fd = ::open(abspath.c_str(), oflags)) == -1) {
+  if ((file = hdfsOpenFile(m_filesystem, fname, oflags, bufsz, -1, -1)) == 0) {
     report_error(cb);
-    HT_ERRORF("open failed: file='%s' - %s", abspath.c_str(), strerror(errno));
+    HT_ERRORF("open failed: file='%s' - %s", fname, strerror(errno));
     return;
   }
 
-#if defined(__APPLE__)
-#ifdef F_NOCACHE
-  //fcntl(mapr_fd, F_NOCACHE, 1);
-#endif  
-#elif defined(__sun__)
-  if (m_directio)
-    directio(mapr_fd, DIRECTIO_ON);
-#endif
-
-  HT_INFOF("open( %s ) = %d (mapr=%d)", fname, (int)fd, mapr_fd);
+  HT_INFOF("open(%s) = %d", fname, (int)fd);
 
   {
     struct sockaddr_in addr;
-    OpenFileDataMaprPtr fdata(new OpenFileDataMapr(fname, mapr_fd, O_RDONLY));
+    OpenFileDataMaprPtr fdata(new OpenFileDataMapr(m_filesystem, fname, file, O_RDONLY));
 
     cb->get_address(addr);
 
@@ -130,56 +110,31 @@ MaprBroker::open(ResponseCallbackOpen *cb, const char *fname,
 void
 MaprBroker::create(ResponseCallbackOpen *cb, const char *fname, uint32_t flags,
                     int32_t bufsz, int16_t replication, int64_t blksz) {
-  int fd, mapr_fd;
-  int oflags = O_WRONLY | O_CREAT;
-  String abspath;
+  hdfsFile file;
+  int fd;
+  int oflags = O_WRONLY;
 
   HT_DEBUGF("create file='%s' flags=%u bufsz=%d replication=%d blksz=%lld",
             fname, flags, bufsz, (int)replication, (Lld)blksz);
 
-  if (fname[0] == '/')
-    abspath = m_rootdir + fname;
-  else
-    abspath = m_rootdir + "/" + fname;
-
   fd = atomic_inc_return(&ms_next_fd);
 
-  if (flags & Filesystem::OPEN_FLAG_OVERWRITE)
-    oflags |= O_TRUNC;
-  else
+  if ((flags & Filesystem::OPEN_FLAG_OVERWRITE) == 0)
     oflags |= O_APPEND;
 
-  if (m_directio && flags & Filesystem::OPEN_FLAG_DIRECTIO) {
-#ifdef O_DIRECT
-    oflags |= O_DIRECT;
-#endif
-  }
-
-  /**
-   * Open the file
-   */
-  if ((mapr_fd = ::open(abspath.c_str(), oflags, 0644)) == -1) {
+  if ((file = hdfsOpenFile(m_filesystem, fname, oflags, bufsz, replication, blksz)) == 0) {
     report_error(cb);
-    HT_ERRORF("open failed: file='%s' - %s", abspath.c_str(), strerror(errno));
+    HT_ERRORF("create failed: file='%s' - %s", fname, strerror(errno));
     return;
   }
 
-#if defined(__APPLE__)
-#ifdef F_NOCACHE
-    fcntl(mapr_fd, F_NOCACHE, 1);
-#endif  
-#elif defined(__sun__)
-    if (m_directio)
-      directio(mapr_fd, DIRECTIO_ON);
-#endif
-
   //HT_DEBUGF("created file='%s' fd=%d mapr_fd=%d", fname, fd, mapr_fd);
 
-  HT_INFOF("create( %s ) = %d (mapr=%d)", fname, (int)fd, mapr_fd);
+  HT_INFOF("create(%s) = %d", fname, (int)fd);
 
   {
     struct sockaddr_in addr;
-    OpenFileDataMaprPtr fdata(new OpenFileDataMapr(fname, mapr_fd, O_WRONLY));
+    OpenFileDataMaprPtr fdata(new OpenFileDataMapr(m_filesystem, fname, file, oflags));
 
     cb->get_address(addr);
 
@@ -201,8 +156,8 @@ void MaprBroker::close(ResponseCallback *cb, uint32_t fd) {
 
 void MaprBroker::read(ResponseCallbackRead *cb, uint32_t fd, uint32_t amount) {
   OpenFileDataMaprPtr fdata;
-  ssize_t nread;
-  uint64_t offset;
+  tSize nread;
+  int64_t offset;
   uint8_t *readbuf;
   int error;
 
@@ -226,17 +181,17 @@ void MaprBroker::read(ResponseCallbackRead *cb, uint32_t fd, uint32_t amount) {
     return;
   }
 
-  if ((offset = (uint64_t)lseek(fdata->fd, 0, SEEK_CUR)) == (uint64_t)-1) {
+  if ((offset = hdfsTell(m_filesystem, fdata->file)) == -1) {
     report_error(cb);
-    HT_ERRORF("lseek failed: fd=%d offset=0 SEEK_CUR - %s", fdata->fd,
+    HT_ERRORF("lseek failed: fd=%d offset=0 SEEK_CUR - %s", fd,
               strerror(errno));
     return;
   }
 
-  if ((nread = FileUtils::read(fdata->fd, buf.base, amount)) == -1) {
+  if ((nread = hdfsRead(m_filesystem, fdata->file, buf.base, (tSize)amount)) == -1) {
     report_error(cb);
     HT_ERRORF("read failed: fd=%d offset=%llu amount=%d - %s",
-	      fdata->fd, (Llu)offset, amount, strerror(errno));
+	      fd, (Llu)offset, amount, strerror(errno));
     return;
   }
 
@@ -252,8 +207,8 @@ void MaprBroker::read(ResponseCallbackRead *cb, uint32_t fd, uint32_t amount) {
 void MaprBroker::append(ResponseCallbackAppend *cb, uint32_t fd,
                          uint32_t amount, const void *data, bool sync) {
   OpenFileDataMaprPtr fdata;
-  ssize_t nwritten;
-  uint64_t offset;
+  tSize nwritten;
+  int64_t offset;
   int error;
 
   HT_DEBUG_OUT <<"append fd="<< fd <<" amount="<< amount <<" data='"
@@ -266,29 +221,29 @@ void MaprBroker::append(ResponseCallbackAppend *cb, uint32_t fd,
     return;
   }
 
-  if ((offset = (uint64_t)lseek(fdata->fd, 0, SEEK_CUR)) == (uint64_t)-1) {
+  if ((offset = hdfsTell(m_filesystem, fdata->file)) == -1) {
     report_error(cb);
-    HT_ERRORF("lseek failed: fd=%d offset=0 SEEK_CUR - %s", fdata->fd,
+    HT_ERRORF("lseek failed: fd=%d offset=0 SEEK_CUR - %s", fd,
               strerror(errno));
     return;
   }
 
-  if ((nwritten = FileUtils::write(fdata->fd, data, amount)) == -1) {
+  if ((nwritten = hdfsWrite(m_filesystem, fdata->file, data, (tSize)amount)) == -1) {
     report_error(cb);
     HT_ERRORF("write failed: fd=%d offset=%llu amount=%d data=%p- %s",
-	      fdata->fd, (Llu)offset, amount, data, strerror(errno));
+	      fd, (Llu)offset, amount, data, strerror(errno));
     return;
   }
 
-  if (sync && fsync(fdata->fd) != 0) {
+  if (sync && hdfsFlush(m_filesystem, fdata->file)) {
     report_error(cb);
-    HT_ERRORF("flush failed: fd=%d - %s", fdata->fd, strerror(errno));
+    HT_ERRORF("flush failed: fd=%d - %s", fd, strerror(errno));
     return;
   }
 
   if ((error = cb->response(offset, nwritten)) != Error::OK)
-    HT_ERRORF("Problem sending response for append(%u, maprfd=%u, %u) - %s",
-              (unsigned)fd, (unsigned)fdata->fd, (unsigned)amount, Error::get_text(error));
+    HT_ERRORF("Problem sending response for append(%u, %u) - %s",
+              (unsigned)fd, (unsigned)amount, Error::get_text(error));
 
 }
 
@@ -306,9 +261,9 @@ void MaprBroker::seek(ResponseCallback *cb, uint32_t fd, uint64_t offset) {
     return;
   }
 
-  if ((offset = (uint64_t)lseek(fdata->fd, offset, SEEK_SET)) == (uint64_t)-1) {
+  if ((offset = hdfsSeek(m_filesystem, fdata->file, (tOffset)offset)) == (uint64_t)-1) {
     report_error(cb);
-    HT_ERRORF("lseek failed: fd=%d offset=%llu - %s", fdata->fd, (Llu)offset,
+    HT_ERRORF("lseek failed: fd=%d offset=%llu - %s", fd, (Llu)offset,
               strerror(errno));
     return;
   }
@@ -321,19 +276,13 @@ void MaprBroker::seek(ResponseCallback *cb, uint32_t fd, uint64_t offset) {
 
 
 void MaprBroker::remove(ResponseCallback *cb, const char *fname) {
-  String abspath;
   int error;
 
   HT_DEBUGF("remove file='%s'", fname);
 
-  if (fname[0] == '/')
-    abspath = m_rootdir + fname;
-  else
-    abspath = m_rootdir + "/" + fname;
-
-  if (unlink(abspath.c_str()) == -1) {
+  if (hdfsDelete(m_filesystem, fname) == -1) {
     report_error(cb);
-    HT_ERRORF("unlink failed: file='%s' - %s", abspath.c_str(),
+    HT_ERRORF("unlink failed: file='%s' - %s", fname,
               strerror(errno));
     return;
   }
@@ -345,27 +294,22 @@ void MaprBroker::remove(ResponseCallback *cb, const char *fname) {
 
 
 void MaprBroker::length(ResponseCallbackLength *cb, const char *fname) {
-  String abspath;
-  uint64_t length;
+  hdfsFileInfo *fileInfo;
+  int numEntries;
   int error;
 
-  HT_DEBUGF("length file='%s'", fname);
-
-  if (fname[0] == '/')
-    abspath = m_rootdir + fname;
-  else
-    abspath = m_rootdir + "/" + fname;
-
-  if ((length = FileUtils::length(abspath)) == (uint64_t)-1) {
+  if ((fileInfo = hdfsListDirectory(m_filesystem, fname, &numEntries)) == 0) {
     report_error(cb);
-    HT_ERRORF("length (stat) failed: file='%s' - %s", abspath.c_str(),
+    HT_ERRORF("length (stat) failed: file='%s' - %s", fname,
               strerror(errno));
     return;
   }
+
+  hdfsFreeFileInfo(fileInfo, numEntries);
   
-  if ((error = cb->response(length)) != Error::OK)
+  if ((error = cb->response(fileInfo->mSize)) != Error::OK)
     HT_ERRORF("Problem sending response (%llu) for length(%s) - %s",
-              (Llu)length, fname, Error::get_text(error));
+              (Llu)fileInfo->mSize, fname, Error::get_text(error));
 }
 
 
@@ -396,9 +340,9 @@ MaprBroker::pread(ResponseCallbackRead *cb, uint32_t fd, uint64_t offset,
     return;
   }
 
-  if ((nread = FileUtils::pread(fdata->fd, buf.base, amount, (off_t)offset)) != (ssize_t)amount) {
+  if ((nread = hdfsPread(m_filesystem, fdata->file, (tOffset)offset, buf.base, (tSize)amount)) == -1) {
     report_error(cb);
-    HT_ERRORF("pread failed: fd=%d amount=%d offset=%llu - %s", fdata->fd,
+    HT_ERRORF("pread failed: fd=%d amount=%d offset=%llu - %s", fd,
               amount, (Llu)offset, strerror(errno));
     return;
   }
@@ -413,19 +357,13 @@ MaprBroker::pread(ResponseCallbackRead *cb, uint32_t fd, uint64_t offset,
 
 
 void MaprBroker::mkdirs(ResponseCallback *cb, const char *dname) {
-  String absdir;
   int error;
 
   HT_DEBUGF("mkdirs dir='%s'", dname);
 
-  if (dname[0] == '/')
-    absdir = m_rootdir + dname;
-  else
-    absdir = m_rootdir + "/" + dname;
-
-  if (!FileUtils::mkdirs(absdir)) {
+  if (hdfsCreateDirectory(m_filesystem, dname) == -1) {
     report_error(cb);
-    HT_ERRORF("mkdirs failed: dname='%s' - %s", absdir.c_str(),
+    HT_ERRORF("mkdirs failed: dname='%s' - %s", dname,
               strerror(errno));
     return;
   }
@@ -437,87 +375,43 @@ void MaprBroker::mkdirs(ResponseCallback *cb, const char *dname) {
 
 
 void MaprBroker::rmdir(ResponseCallback *cb, const char *dname) {
-  String absdir;
-  String cmd_str;
   int error;
 
   if (m_verbose) {
     HT_DEBUGF("rmdir dir='%s'", dname);
   }
 
-  if (dname[0] == '/')
-    absdir = m_rootdir + dname;
-  else
-    absdir = m_rootdir + "/" + dname;
-
-  if (FileUtils::exists(absdir)) {
-    cmd_str = (String)"/bin/rm -rf " + absdir;
-    if (system(cmd_str.c_str()) != 0) {
-      HT_ERRORF("%s failed.", cmd_str.c_str());
-      cb->error(Error::DFSBROKER_IO_ERROR, cmd_str);
-      return;
-    }
-  }
-
-#if 0
-  if (rmdir(absdir.c_str()) != 0) {
+  if (hdfsDelete(m_filesystem, dname) == -1) {
     report_error(cb);
-    HT_ERRORF("rmdir failed: dname='%s' - %s", absdir.c_str(), strerror(errno));
+    HT_ERRORF("rmdirs failed: dname='%s' - %s", dname,
+              strerror(errno));
     return;
   }
-#endif
 
   if ((error = cb->response_ok()) != Error::OK)
     HT_ERRORF("Problem sending response for mkdirs(%s) - %s",
               dname, Error::get_text(error));
-
 }
 
 void MaprBroker::readdir(ResponseCallbackReaddir *cb, const char *dname) {
   std::vector<String> listing;
-  String absdir;
+  hdfsFileInfo *fileInfo;
+  int numEntries;
 
   HT_DEBUGF("Readdir dir='%s'", dname);
 
-  if (dname[0] == '/')
-    absdir = m_rootdir + dname;
-  else
-    absdir = m_rootdir + "/" + dname;
-
-  DIR *dirp = opendir(absdir.c_str());
-  if (dirp == 0) {
+  if ((fileInfo = hdfsListDirectory(m_filesystem, dname, &numEntries)) == 0) {
     report_error(cb);
-    HT_ERRORF("opendir('%s') failed - %s", absdir.c_str(), strerror(errno));
+    HT_ERRORF("readdir('%s') failed - %s", dname, strerror(errno));
     return;
   }
 
-  struct dirent *dp = (struct dirent *)new uint8_t [sizeof(struct dirent)+1025];
-  struct dirent *result;
-
-  if (readdir_r(dirp, dp, &result) != 0) {
-    report_error(cb);
-    HT_ERRORF("readdir('%s') failed - %s", absdir.c_str(), strerror(errno));
-    (void)closedir(dirp);
-    delete [] (uint8_t *)dp;
-    return;
-  }
-
-  while (result != 0) {
-    if (result->d_name[0] != '.' && result->d_name[0] != 0) {
-      listing.push_back((String)result->d_name);
-      //HT_INFOF("readdir Adding listing '%s'", result->d_name);
-    }
-
-    if (readdir_r(dirp, dp, &result) != 0) {
-      report_error(cb);
-      HT_ERRORF("readdir('%s') failed - %s", absdir.c_str(), strerror(errno));
-      delete [] (uint8_t *)dp;
-      return;
+  for (int i=0; i<numEntries; i++) {
+    if (fileInfo[i].mName[0] != '.' && fileInfo[i].mName[0] != 0) {
+      listing.push_back((String)fileInfo[i].mName);
     }
   }
-  (void)closedir(dirp);
-
-  delete [] (uint8_t *)dp;
+  hdfsFreeFileInfo(fileInfo, numEntries);
 
   HT_DEBUGF("Sending back %d listings", (int)listing.size());
 
@@ -537,9 +431,9 @@ void MaprBroker::flush(ResponseCallback *cb, uint32_t fd) {
     return;
   }
 
-  if (fsync(fdata->fd) != 0) {
+  if (hdfsFlush(m_filesystem, fdata->file) == -1) {
     report_error(cb);
-    HT_ERRORF("flush failed: fd=%d - %s", fdata->fd, strerror(errno));
+    HT_ERRORF("flush failed: fd=%d - %s", fd, strerror(errno));
     return;
   }
 
@@ -564,25 +458,22 @@ void MaprBroker::exists(ResponseCallbackExists *cb, const char *fname) {
 
   HT_DEBUGF("exists file='%s'", fname);
 
-  if (fname[0] == '/')
-    abspath = m_rootdir + fname;
-  else
-    abspath = m_rootdir + "/" + fname;
+  if (hdfsExists(m_filesystem, fname) == -1) {
+    HT_ERRORF("flush failed: file=%s - %s", fname, strerror(errno));
+    cb->response(false);
+    return;
+  }
 
-  cb->response(FileUtils::exists(abspath));
+  cb->response(true);
 }
 
 
 void
 MaprBroker::rename(ResponseCallback *cb, const char *src, const char *dst) {
-  String asrc =
-    format("%s%s%s", m_rootdir.c_str(), *src == '/' ? "" : "/", src);
-  String adst =
-    format("%s%s%s", m_rootdir.c_str(), *dst == '/' ? "" : "/", dst);
 
-  HT_DEBUGF("rename %s -> %s", asrc.c_str(), adst.c_str());
+  HT_DEBUGF("rename %s -> %s", src, dst);
 
-  if (std::rename(asrc.c_str(), adst.c_str()) != 0) {
+  if (hdfsRename(m_filesystem, src, dst) == -1) {
     report_error(cb);
     return;
   }

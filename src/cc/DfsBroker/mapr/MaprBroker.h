@@ -52,8 +52,6 @@ namespace Hypertable {
       if (hdfsCloseFile(fs, file) != 0) {
         HT_ERRORF("Error closing file '%s' - %s", filename.c_str(), strerror(errno));
       }
-
-      close(fd);
     }
     hdfsFS fs;
     hdfsFile file;
@@ -115,9 +113,11 @@ namespace Hypertable {
     virtual void report_error(ResponseCallback *cb);
 
     bool         m_verbose;
-    String       m_rootdir;
+    hdfsFS       m_filesystem;
     bool         m_aggregate_writes;
     bool         m_readbuffering;
+    String       m_namenode_host;
+    uint16_t     m_namenode_port;
   };
 
 }
