@@ -172,14 +172,14 @@ public class DriverHypertable extends Driver {
                                      qualifier, 0, qualifier.length,
                                      SerializedCellsFlag.AUTO_ASSIGN,
                                      value, 0, value.length, SerializedCellsFlag.FLAG_INSERT)) {
-              mClient.set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
+              mClient.mutator_set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
               mCellsWriter.clear();
             }
           }
         }
         if (mParallelism == 0) {
           if (!mCellsWriter.isEmpty())
-            mClient.set_cells_serialized(mMutator, mCellsWriter.buffer(), true);
+            mClient.mutator_set_cells_serialized(mMutator, mCellsWriter.buffer(), true);
           else
             mClient.flush_mutator(mMutator);
         }
@@ -232,14 +232,14 @@ public class DriverHypertable extends Driver {
                                      qualifier, 0, qualifier.length,
                                      SerializedCellsFlag.AUTO_ASSIGN,
                                      value, 0, value.length, SerializedCellsFlag.FLAG_INSERT)) {
-              mClient.set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
+              mClient.mutator_set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
               mCellsWriter.clear();
             }
           }
         }
         if (mParallelism == 0) {
           if (!mCellsWriter.isEmpty())
-            mClient.set_cells_serialized(mMutator, mCellsWriter.buffer(), true);
+            mClient.mutator_set_cells_serialized(mMutator, mCellsWriter.buffer(), true);
           else
             mClient.flush_mutator(mMutator);
         }

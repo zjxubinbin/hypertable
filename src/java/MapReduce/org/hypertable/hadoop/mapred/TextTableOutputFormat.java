@@ -140,7 +140,7 @@ public class TextTableOutputFormat implements org.apache.hadoop.mapred.OutputFor
     public void close(Reporter reporter) throws IOException {
       try {
         if (!mCellsWriter.isEmpty()) {
-          mClient.set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
+          mClient.mutator_set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
           mCellsWriter.clear();
         }
         if (mNamespaceId != 0)
@@ -229,7 +229,7 @@ public class TextTableOutputFormat implements org.apache.hadoop.mapred.OutputFor
                               byte_array, qualifier_offset, qualifier_length,
                               timestamp, byte_array, value_offset, value_length,
                               SerializedCellsFlag.FLAG_INSERT)) {
-          mClient.set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
+          mClient.mutator_set_cells_serialized(mMutator, mCellsWriter.buffer(), false);
           mCellsWriter.clear();
           if ((row_length+family_length+qualifier_length+value_length+32) > mCellsWriter.capacity())
             mCellsWriter = new SerializedCellsWriter(row_length+family_length+qualifier_length+value_length+32);

@@ -51,7 +51,7 @@ public class BasicClientTest {
         cell.setKey(key);
         String vtmp = "java-v1";
         cell.setValue( ByteBuffer.wrap(vtmp.getBytes()) );
-        client.set_cell(mutator, cell);
+        client.mutator_set_cell(mutator, cell);
       }
       finally {
         client.close_mutator(mutator);
@@ -144,7 +144,7 @@ public class BasicClientTest {
         cell.setKey(key);
         String vtmp = "java-async-put-v1";
         cell.setValue( ByteBuffer.wrap(vtmp.getBytes()) );
-        client.set_cell_async(mutator_async_1, cell);
+        client.async_mutator_set_cell(mutator_async_1, cell);
 
         key = new Key();
         key.setRow("java-put2");
@@ -152,7 +152,7 @@ public class BasicClientTest {
         cell.setKey(key);
         vtmp = "java-async-put-v2";
         cell.setValue( ByteBuffer.wrap(vtmp.getBytes()) );
-        client.set_cell_async(mutator_async_2, cell);
+        client.async_mutator_set_cell(mutator_async_2, cell);
 
         client.flush_mutator_async(mutator_async_1);
         client.flush_mutator_async(mutator_async_2);
@@ -235,7 +235,7 @@ public class BasicClientTest {
         cell.setKey(key);
         str = "foo";
         cell.setValue( ByteBuffer.wrap(str.getBytes()) );
-        client.set_cell(mutator, cell);
+        client.mutator_set_cell(mutator, cell);
 
         cell = new Cell();
         key = new Key();
@@ -244,7 +244,7 @@ public class BasicClientTest {
         cell.setKey(key);
         str = "bar";
         cell.setValue( ByteBuffer.wrap(str.getBytes()) );
-        client.set_cell(mutator, cell);
+        client.mutator_set_cell(mutator, cell);
 
         client.close_mutator(mutator);
 

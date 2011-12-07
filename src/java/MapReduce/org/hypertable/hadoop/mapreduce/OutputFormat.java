@@ -131,7 +131,7 @@ public class OutputFormat extends org.apache.hadoop.mapreduce.OutputFormat<KeyWr
         key.convert_buffers_to_strings();
         cell.key = key;
         cell.value = ByteBuffer.wrap(value.getBytes());
-        mClient.set_cell(mMutator, cell);
+        mClient.mutator_set_cell(mMutator, cell);
       }
       catch (Exception e) {
         log.error(e);
