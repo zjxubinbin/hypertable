@@ -12,39 +12,28 @@ if (Mapr_INCLUDE_DIR)
 endif ()
 
 find_path(Mapr_INCLUDE_DIR hdfs.h
-  $ENV{HADOOP_HOME}/src/c++/libhdfs
-  /usr/lib/hadoop/src/c++/libhdfs
-  /opt/local/include
-  /usr/local/include
+  /opt/mapr/hadoop/hadoop-0.20.2/src/c++/libhdfs
 )
-
-# NOTE:  Ditch this once ported to MapR
-find_path(Jni_INCLUDE_DIR jni.h
-  /System/Library/Frameworks/JavaVM.framework/Headers
-)
-mark_as_advanced(Jni_INCLUDE_DIR)
 
 macro(FIND_MAPR_LIB lib)
   find_library(${lib}_LIB NAMES ${lib}
-    PATHS $ENV{HADOOP_HOME}/src/c++/install/lib/
-        /usr/lib/hadoop/src/c++/install/lib/
-        $ENV{HADOOP_HOME}/c++/lib /usr/lib/hadoop/c++/lib
-        /opt/local/lib /usr/local/lib
-  )
+    PATHS /opt/mapr/lib $ENV{JAVA_HOME}/jre/lib/amd64/server  )
   mark_as_advanced(${lib}_LIB)
 endmacro(FIND_MAPR_LIB lib libname)
 
-FIND_MAPR_LIB(hdfs)
+FIND_MAPR_LIB(MapRClient)
+FIND_MAPR_LIB(jvm)
 
-if (Mapr_INCLUDE_DIR)
+if (Mapr_INCLUDE_DIR AND MapRClient_LIB AND jvm_LIB)
   set(Mapr_FOUND TRUE)
-  set(Mapr_LIBRARIES ${hdfs_LIB})
+  set(Mapr_LIBRARIES ${MapRClient_LIB} ${jvm_LIB})
 else ()
    set(Mapr_FOUND FALSE)
    set(Mapr_LIBRARIES)
 endif ()
 
 if (Mapr_FOUND)
+   message(STATUS "Found MAPR: ${Mapr_LIBRARIES}")
    if (NOT Mapr_FIND_QUIETLY)
       message(STATUS "Found MAPR: ${Mapr_LIBRARIES}")
    endif ()

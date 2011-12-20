@@ -61,7 +61,7 @@ MaprBroker::MaprBroker(PropertiesPtr &cfg) {
   m_aggregate_writes = cfg->get_bool("DfsBroker.Mapr.aggregate.writes", true);
   m_readbuffering = cfg->get_bool("DfsBroker.Mapr.readbuffering", true);
   m_namenode_host = cfg->get_str("DfsBroker.Hdfs.NameNode.Host");
-  m_namenode_port = cfg->get_i16("DfsBroker.Hdfs.NameNode.Host");
+  m_namenode_port = cfg->get_i16("DfsBroker.Hdfs.NameNode.Port");
 
   m_filesystem = hdfsConnectNewInstance(m_namenode_host.c_str(), m_namenode_port);
 
@@ -361,6 +361,9 @@ void MaprBroker::mkdirs(ResponseCallback *cb, const char *dname) {
 
   HT_DEBUGF("mkdirs dir='%s'", dname);
 
+  if (dname[strlen(dname)-1] == '/')
+    ((char *)dname)[strlen(dname)-1] = 0;
+
   if (hdfsCreateDirectory(m_filesystem, dname) == -1) {
     report_error(cb);
     HT_ERRORF("mkdirs failed: dname='%s' - %s", dname,
@@ -459,7 +462,6 @@ void MaprBroker::exists(ResponseCallbackExists *cb, const char *fname) {
   HT_DEBUGF("exists file='%s'", fname);
 
   if (hdfsExists(m_filesystem, fname) == -1) {
-    HT_ERRORF("flush failed: file=%s - %s", fname, strerror(errno));
     cb->response(false);
     return;
   }
