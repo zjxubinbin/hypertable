@@ -45,11 +45,14 @@ extern "C" {
 #include "Common/FileUtils.h"
 #include "Common/Filesystem.h"
 #include "Common/Path.h"
+#include "Common/ScopeGuard.h"
 #include "Common/String.h"
 #include "Common/System.h"
 #include "Common/SystemInfo.h"
 
 #include "MaprBroker.h"
+
+#include <boost/algorithm/string.hpp>
 
 using namespace Hypertable;
 using namespace std;
@@ -295,17 +298,16 @@ void MaprBroker::remove(ResponseCallback *cb, const char *fname) {
 
 void MaprBroker::length(ResponseCallbackLength *cb, const char *fname) {
   hdfsFileInfo *fileInfo;
-  int numEntries;
   int error;
 
-  if ((fileInfo = hdfsListDirectory(m_filesystem, fname, &numEntries)) == 0) {
+  if ((fileInfo = hdfsGetPathInfo(m_filesystem, fname)) == 0) {
     report_error(cb);
     HT_ERRORF("length (stat) failed: file='%s' - %s", fname,
               strerror(errno));
     return;
   }
 
-  hdfsFreeFileInfo(fileInfo, numEntries);
+  hdfsFreeFileInfo(fileInfo, 1);
   
   if ((error = cb->response(fileInfo->mSize)) != Error::OK)
     HT_ERRORF("Problem sending response (%llu) for length(%s) - %s",
@@ -361,10 +363,11 @@ void MaprBroker::mkdirs(ResponseCallback *cb, const char *dname) {
 
   HT_DEBUGF("mkdirs dir='%s'", dname);
 
-  if (dname[strlen(dname)-1] == '/')
-    ((char *)dname)[strlen(dname)-1] = 0;
+  String make_dir = dname;
 
-  if (hdfsCreateDirectory(m_filesystem, dname) == -1) {
+  boost::trim_right_if(make_dir, boost::is_any_of("/"));
+
+  if (hdfsCreateDirectory(m_filesystem, make_dir.c_str()) == -1) {
     report_error(cb);
     HT_ERRORF("mkdirs failed: dname='%s' - %s", dname,
               strerror(errno));
@@ -376,25 +379,73 @@ void MaprBroker::mkdirs(ResponseCallback *cb, const char *dname) {
               dname, Error::get_text(error));
 }
 
+namespace {
+
+  void free_file_info(hdfsFileInfo *fileInfo, int numEntries) {
+    if (numEntries != 0)
+      hdfsFreeFileInfo(fileInfo, numEntries);
+  }
+
+
+  void rmdir_recursive(hdfsFS fs, const String &dname) {
+    hdfsFileInfo *fileInfo = 0;
+    int numEntries = 0;
+
+    HT_ON_SCOPE_EXIT(&free_file_info, fileInfo, numEntries);
+
+    if ((fileInfo = hdfsListDirectory(fs, dname.c_str(), &numEntries)) == 0) {
+      if (errno == ENOENT)
+	return;
+      HT_THROWF(Error::DFSBROKER_IO_ERROR, "Problem listing directory '%s' - %s",
+		dname.c_str(), strerror(errno));
+    }
+
+    for (int i=0; i<numEntries; i++) {
+      String child = fileInfo[i].mName;
+      if (fileInfo[i].mKind == kObjectKindDirectory)
+	rmdir_recursive(fs, child);
+      else if (fileInfo[i].mKind == kObjectKindFile) {
+	if (hdfsDelete(fs, child.c_str()) == -1) {
+	  if (errno != 0) {
+	    HT_THROWF(Error::DFSBROKER_IO_ERROR, "Problem deleting file '%s' - %s",
+		      child.c_str(), strerror(errno));
+	  }
+	}
+      }
+    }
+
+    if (hdfsDelete(fs, dname.c_str()) == -1) {
+      HT_THROWF(Error::DFSBROKER_IO_ERROR, "Problem removing directory '%s' - %s",
+		dname.c_str(), strerror(errno));
+    }
+  }
+
+}
 
 void MaprBroker::rmdir(ResponseCallback *cb, const char *dname) {
   int error;
+  String removal_dir = String(dname);
 
-  if (m_verbose) {
+  boost::trim_right_if(removal_dir, boost::is_any_of("/"));
+
+  if (m_verbose)
     HT_DEBUGF("rmdir dir='%s'", dname);
-  }
 
-  if (hdfsDelete(m_filesystem, dname) == -1) {
-    report_error(cb);
-    HT_ERRORF("rmdirs failed: dname='%s' - %s", dname,
-              strerror(errno));
-    return;
+  try {
+    rmdir_recursive(m_filesystem, removal_dir);
+  }
+  catch (Hypertable::Exception &e) {
+    if ((error = cb->error(e.code(), e.what())) != Error::OK)
+      HT_ERRORF("Problem sending error response for rmdir(%s) - %s",
+		dname, Error::get_text(error));
+    HT_ERROR_OUT << e << HT_END;
   }
 
   if ((error = cb->response_ok()) != Error::OK)
     HT_ERRORF("Problem sending response for mkdirs(%s) - %s",
               dname, Error::get_text(error));
 }
+
 
 void MaprBroker::readdir(ResponseCallbackReaddir *cb, const char *dname) {
   std::vector<String> listing;
@@ -410,8 +461,12 @@ void MaprBroker::readdir(ResponseCallbackReaddir *cb, const char *dname) {
   }
 
   for (int i=0; i<numEntries; i++) {
+    const char *ptr;
     if (fileInfo[i].mName[0] != '.' && fileInfo[i].mName[0] != 0) {
-      listing.push_back((String)fileInfo[i].mName);
+      if ((ptr = strrchr(fileInfo[i].mName, '/')))
+	listing.push_back((String)(ptr+1));
+      else
+	listing.push_back((String)fileInfo[i].mName);
     }
   }
   hdfsFreeFileInfo(fileInfo, numEntries);
