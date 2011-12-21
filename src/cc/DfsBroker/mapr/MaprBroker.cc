@@ -307,11 +307,14 @@ void MaprBroker::length(ResponseCallbackLength *cb, const char *fname) {
     return;
   }
 
-  hdfsFreeFileInfo(fileInfo, 1);
+  HT_DEBUGF("length('%s') = %lu", fname, (unsigned long)fileInfo->mSize);
   
   if ((error = cb->response(fileInfo->mSize)) != Error::OK)
     HT_ERRORF("Problem sending response (%llu) for length(%s) - %s",
               (Llu)fileInfo->mSize, fname, Error::get_text(error));
+
+  hdfsFreeFileInfo(fileInfo, 1);
+
 }
 
 
@@ -488,6 +491,8 @@ void MaprBroker::flush(ResponseCallback *cb, uint32_t fd) {
     cb->error(Error::DFSBROKER_BAD_FILE_HANDLE, errbuf);
     return;
   }
+
+  HT_DEBUGF("flush fd=%d filename=%s", fd, fdata->filename.c_str());
 
   if (hdfsFlush(m_filesystem, fdata->file) == -1) {
     report_error(cb);
