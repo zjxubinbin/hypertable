@@ -30,6 +30,7 @@ import java.util.logging.Logger;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.server.namenode.NotReplicatedYetException;
 
@@ -100,7 +101,8 @@ public class HdfsBroker {
     /**
      *
      */
-    public void Open(ResponseCallbackOpen cb, String fileName, int flags, int bufferSize) {
+    public void Open(ResponseCallbackOpen cb, String fileName, int flags,
+		     int bufferSize, boolean verify_checksum) {
         int fd;
         OpenFileData ofd;
         int error = Error.OK;
@@ -117,11 +119,21 @@ public class HdfsBroker {
 
             if (mVerbose)
               log.info("Opening file '" + fileName + "' flags=" + flags + " bs=" + bufferSize
-                         + " handle = " + fd);
+                         + " handle = " + fd + " verify_checksum=" + verify_checksum);
 
             ofd = mOpenFileMap.Create(fd, cb.GetAddress());
 
-            ofd.is = mFilesystem.open(new Path(fileName));
+	    synchronized (this) {
+		if (verify_checksum) {
+		    ofd.is = mFilesystem.open(new Path(fileName));
+		}
+		else {
+		    mFilesystem.setVerifyChecksum(false);
+		    ofd.is_noverify = mFilesystem.open(new Path(fileName));
+		    mFilesystem.setVerifyChecksum(true);
+		}
+	    }
+
             ofd.pathname = fileName;
 
             // todo:  do something with bufferSize
@@ -169,6 +181,13 @@ public class HdfsBroker {
                         log.info("Closing input file " + ofd.pathname + " handle " + fd);
                     ofd.is.close();
                     ofd.is = null;
+                }
+
+                if (ofd.is_noverify != null) {
+                    if (mVerbose)
+                        log.info("Closing noverify input stream for file " + ofd.pathname + " handle " + fd);
+                    ofd.is_noverify.close();
+                    ofd.is_noverify = null;
                 }
 
                 if (ofd.os != null) {
@@ -419,11 +438,12 @@ public class HdfsBroker {
     }
 
     public void PositionRead(ResponseCallbackPositionRead cb, int fd,
-                             long offset, int amount) {
+                             long offset, int amount, boolean verify_checksum) {
         int error = Error.OK;
         OpenFileData ofd;
         int retries = 10;
         byte [] data = null;
+	FSDataInputStream is;
 
         while (true) {
           try {
@@ -438,9 +458,21 @@ public class HdfsBroker {
                log.info("Reading " + amount + " bytes from fd=" + fd);
             */
 
-            if (ofd.is == null)
-              throw new IOException("File handle " + fd
-                                    + " not open for reading");
+	    if (verify_checksum) {
+		if (ofd.is == null) {
+		    synchronized (this) {
+			if (ofd.is == null)
+			    ofd.is = mFilesystem.open(new Path(ofd.pathname));
+		    }
+		}
+		is = ofd.is;
+	    }
+	    else
+		is = ofd.is_noverify;
+
+            if (is == null)
+		throw new IOException("File handle " + fd
+				      + " not open for reading");
 
             if (data == null)
               data = new byte [ amount ];
@@ -448,7 +480,7 @@ public class HdfsBroker {
             int nread = 0;
 
             while (nread < amount) {
-              int r = ofd.is.read(offset + nread, data, nread, amount - nread);
+              int r = is.read(offset + nread, data, nread, amount - nread);
 
               if (r < 0) break;
 

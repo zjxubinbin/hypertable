@@ -225,7 +225,7 @@ bool CellStoreScannerIntervalBlockIndex<IndexT>::fetch_next_block(bool eob) {
           m_fd = m_cellstore->reopen_fd();
 
         /** Read compressed block **/
-        Global::dfs->pread(m_fd, buf.ptr, m_block.zlength, m_block.offset);
+        Global::dfs->pread(m_fd, buf.ptr, m_block.zlength, m_block.offset, second_try);
 
         buf.ptr += m_block.zlength;
         /** inflate compressed block **/

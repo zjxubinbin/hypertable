@@ -43,6 +43,7 @@ public class RequestHandlerPositionRead extends ApplicationHandler {
     public void run() {
         int   fd, amount;
         long  offset;
+	boolean  verify_checksum;
         ResponseCallbackPositionRead cb =
             new ResponseCallbackPositionRead(mComm, mEvent);
 
@@ -56,8 +57,10 @@ public class RequestHandlerPositionRead extends ApplicationHandler {
             offset = mEvent.payload.getLong();
 
             amount = mEvent.payload.getInt();
+	    
+            verify_checksum = mEvent.payload.get() != 0;
 
-            mBroker.PositionRead(cb, fd, offset, amount);
+            mBroker.PositionRead(cb, fd, offset, amount, verify_checksum);
 
         }
         catch (ProtocolException e) {
