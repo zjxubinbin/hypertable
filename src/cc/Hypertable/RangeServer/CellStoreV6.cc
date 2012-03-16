@@ -1015,7 +1015,7 @@ void CellStoreV6::display_block_info() {
 void CellStoreV6::record_split_row(const SerializedKey key) {
   if (key.ptr) {
     std::string split_row = key.row();
-    if (split_row > m_start_row && split_row < m_end_row)
+    if (split_row >= m_start_row && split_row < m_end_row)
       m_split_row = split_row;
   }
 }

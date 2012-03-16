@@ -11,7 +11,7 @@ $HT_HOME/bin/ht Hypertable.RangeServer --verbose --pidfile=$PIDFILE \
     --Hypertable.RangeServer.Range.SplitSize=2000000 \
     --Hypertable.RangeServer.Maintenance.Interval=100 > rangeserver.output 2>&1 &
 
-sleep 2
+sleep 30
 
 $HT_HOME/bin/ht shell --no-prompt < $SCRIPT_DIR/create-table.hql
 
@@ -19,7 +19,7 @@ $HT_HOME/bin/ht ht_load_generator update --spec-file=foo.spec --max-bytes=220000
 
 sleep 2
 
-$HT_HOME/bin/ht ht_load_generator update --spec-file=bar.spec --max-bytes=40000000 \
+$HT_HOME/bin/ht ht_load_generator update --spec-file=bar.spec --max-bytes=20000000 \
     --Hypertable.Mutator.FlushDelay=100
 
 sleep 1
